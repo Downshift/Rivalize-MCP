@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import { stripAiDisclosure } from './__fixtures__/strip-ai-disclosure.js';
 import { RivalizeApiError } from './client.js';
 import { registerTools } from './tools.js';
 
@@ -23,7 +24,7 @@ function harness(clientOverrides: Record<string, unknown> = {}, allowWrites = fa
   const tools = new Map<string, Handler>();
   const server = {
     registerTool(name: string, _config: unknown, handler: Handler) {
-      tools.set(name, handler);
+      tools.set(name, async (args) => stripAiDisclosure(await handler(args)));
     },
   };
   const client = {

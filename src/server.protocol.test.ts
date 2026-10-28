@@ -13,7 +13,12 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RivalizeClient } from './client.js';
 import { buildServer } from './index.js';
-import { READ_TOOL_NAMES, type RegisterToolsOptions, TOOL_NAMES } from './tools.js';
+import {
+  AGENT_READ_TOOL_NAMES,
+  READ_TOOL_NAMES,
+  type RegisterToolsOptions,
+  TOOL_NAMES,
+} from './tools.js';
 
 const API_KEY = 'rk_live_protocol_test_secret';
 const CONFIG = { apiKey: API_KEY, apiUrl: 'https://api.test.invalid' };
@@ -94,13 +99,15 @@ describe('protocol conformance (real McpServer + real Client)', () => {
     const { client } = await setup();
     const info = client.getServerVersion();
     expect(info?.name).toBe('rivalize-mcp-server');
-    expect(info?.version).toBe('0.3.2');
+    expect(info?.version).toBe('0.5.0');
   });
 
-  it('tools/list returns exactly the 13 read tools by default, each with description + object input schema', async () => {
+  it('tools/list returns exactly the 14 read tools and 2 Agent plan reads by default, each with description + object input schema', async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual([...READ_TOOL_NAMES].sort());
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [...READ_TOOL_NAMES, ...AGENT_READ_TOOL_NAMES].sort(),
+    );
     expect(tools.some((t) => t.name === 'add_competitor')).toBe(false);
     for (const tool of tools) {
       expect(tool.description, `${tool.name} description`).toBeTruthy();
@@ -154,11 +161,16 @@ describe('protocol conformance (real McpServer + real Client)', () => {
     const { client } = await setup(undefined, { allowWrites: true });
     const { tools } = await client.listTools();
     const byName = new Map(tools.map((t) => [t.name, t]));
-    for (const name of TOOL_NAMES.filter((n) => n !== 'add_competitor')) {
+    const writes = ['add_competitor', 'run_report', 'set_agent_competitor'];
+    for (const name of TOOL_NAMES.filter((n) => !writes.includes(n))) {
       expect(byName.get(name)?.annotations?.readOnlyHint, name).toBe(true);
     }
+    expect(byName.get('set_agent_competitor')?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get('add_competitor')?.annotations?.readOnlyHint).toBe(false);
     expect(byName.get('add_competitor')?.annotations?.destructiveHint).toBe(false);
+    expect(byName.get('run_report')?.annotations?.readOnlyHint).toBe(false);
+    expect(byName.get('run_report')?.annotations?.idempotentHint).toBe(false);
+    expect(byName.get('get_report_status')?.annotations?.readOnlyHint).toBe(true);
   });
 
   it('unknown tool name → protocol error; server survives and serves the next call', async () => {
@@ -274,7 +286,7 @@ describe('protocol conformance (real McpServer + real Client)', () => {
     expect(text).toContain('500');
     // And the connection is still healthy afterwards.
     const { tools } = await client.listTools();
-    expect(tools.length).toBe(READ_TOOL_NAMES.length);
+    expect(tools.length).toBe(READ_TOOL_NAMES.length + AGENT_READ_TOOL_NAMES.length);
   });
 
   it('happy path per tool over the real protocol', async () => {

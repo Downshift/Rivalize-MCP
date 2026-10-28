@@ -398,13 +398,15 @@ export function renderTeardown(company: Dict, opts: TeardownOptions): string {
   const themesR = strList(reviews.recentReviewThemes);
   const rating = num(appStore.rating);
   const reviewCount = num(appStore.reviewCount);
+  // A company can publish many apps; the line names the one measured.
+  const appName = str(appStore.appName);
   if (rating !== null || themesR.length) {
     out.push('');
     out.push('## Reviews');
     // One decimal, as the dashboard shows it (a stored 3.22222 reads 3.2).
     if (rating !== null)
       out.push(
-        `App Store: ${rating.toFixed(1)}★${reviewCount !== null ? ` (${fmtCount(reviewCount)} reviews)` : ''}`,
+        `${appName ? `App Store (${appName})` : 'App Store'}: ${rating.toFixed(1)}★${reviewCount !== null ? ` (${fmtCount(reviewCount)} reviews)` : ''}`,
       );
     if (themesR.length) out.push(`\n**What customers say:**\n${bullets(themesR)}`);
   }

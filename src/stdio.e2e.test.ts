@@ -146,7 +146,7 @@ describe('stdio E2E (real process, fixture API)', () => {
     expect(stderr.text()).toContain('rk_live_');
   });
 
-  it('over real stdio: initialize + 13 read tools + a live tool call against the fixture API', async () => {
+  it('over real stdio: initialize + 14 read tools + a live tool call against the fixture API', async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [DIST_ENTRY],
@@ -158,7 +158,7 @@ describe('stdio E2E (real process, fixture API)', () => {
     try {
       expect(client.getServerVersion()?.name).toBe('rivalize-mcp-server');
       const { tools } = await client.listTools();
-      expect(tools.length).toBe(13);
+      expect(tools.length).toBe(16); // 14 reads + the 2 Agent plan reads
       expect(tools.some((t) => t.name === 'add_competitor')).toBe(false);
       // The freshness and evidence reads, over the wire.
       expect(tools.some((t) => t.name === 'get_freshness')).toBe(true);
@@ -179,7 +179,7 @@ describe('stdio E2E (real process, fixture API)', () => {
     }
   }, 20_000);
 
-  it('over real stdio: RIVALIZE_MCP_ALLOW_WRITES=1 adds add_competitor (14 tools)', async () => {
+  it('over real stdio: RIVALIZE_MCP_ALLOW_WRITES=1 adds add_competitor, set_agent_competitor and run_report (19 tools)', async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [DIST_ENTRY],
@@ -194,7 +194,7 @@ describe('stdio E2E (real process, fixture API)', () => {
     await client.connect(transport);
     try {
       const { tools } = await client.listTools();
-      expect(tools.length).toBe(14);
+      expect(tools.length).toBe(19); // + add_competitor + set_agent_competitor + run_report
       expect(tools.some((t) => t.name === 'add_competitor')).toBe(true);
     } finally {
       await client.close();

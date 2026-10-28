@@ -2,9 +2,10 @@
  * Rivalize MCP tools.
  *
  * Each tool is a thin wrapper over an authenticated v1 REST endpoint.
- * READ_TOOL_NAMES are always registered. WRITE_TOOL_NAMES (add_competitor, which
- * spends credits and queues analysis) are registered only when writes are
- * enabled; they are off by default, so the server is read-only unless asked.
+ * READ_TOOL_NAMES are always registered. WRITE_TOOL_NAMES (add_competitor and
+ * run_report, which spend credits) are registered only when writes are enabled,
+ * as is the Agent plan slot write; they are off by default, so the server is
+ * read-only unless asked.
  *
  * Tool handlers do no business logic: they validate input (Zod), call the REST
  * client, and shape the response. Tenant isolation, plan gating and rate limits
@@ -13,6 +14,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { markToolResult } from './ai-disclosure.js';
 import { RivalizeApiError, type RivalizeClient } from './client.js';
 import { type FitOptions, fitJson, normalizeListPage } from './fit-json.js';
 import { paginateMarkdown, selectSections } from './markdown-pages.js';
@@ -84,6 +86,41 @@ type ToolResult = {
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
 };
+
+// Agent plan tools.
+const ListAgentCompetitorsSchema = z.object({}).strict();
+
+const AGENT_GROUPS = ['core', 'ads_seo', 'extended'] as const;
+
+const GetAgentCompetitorSchema = z
+  .object({
+    competitor_id: text(255)
+      .min(1)
+      .describe('Competitor id from list_agent_competitors (its domain, e.g. "linear.app")'),
+    group: z
+      .enum(AGENT_GROUPS)
+      .optional()
+      .describe(
+        'Return only this data group (core, ads_seo, extended). Default: every group your plan includes.',
+      ),
+  })
+  .strict();
+
+const SetAgentCompetitorSchema = z
+  .object({
+    url: text(2048).min(1).describe('The competitor website URL'),
+    name: text(200).optional().describe('Display name; derived from the URL when omitted'),
+    slot: z
+      .number()
+      .int()
+      .min(0)
+      .max(2)
+      .optional()
+      .describe(
+        "Slot 0-2 to put it in. Omitted: the first empty slot. Naming a filled slot replaces its competitor and uses that slot's one change this calendar month.",
+      ),
+  })
+  .strict();
 
 /**
  * What a 404 means for one tool. The API answers some routes with a
@@ -174,6 +211,21 @@ function codeHint(code: string | undefined): string | undefined {
     case 'UNKNOWN_SECTION':
     case 'SECTION_NOT_IN_REPORT':
       return ' Retry get_report with one of those sections, or without section for the whole report.';
+    // The Agent plans' refusals already say what is left and where to go
+    // next; the API's sentence is passed through as it is, with no generic hint on top.
+    case 'agent_daily_call_cap':
+    case 'agent_slot_limit':
+    case 'agent_slot_change_limit':
+    case 'agent_module_not_in_plan':
+    case 'agent_model_work_not_in_plan':
+    case 'agent_plan_required':
+    case 'api_plan_required':
+    // run_report: the API's own sentence says what is left and when it resets
+    // (a 429 here is the daily run allowance, not the hourly rate limit).
+    case 'API_REPORT_RUN_LIMIT':
+    case 'IDEMPOTENCY_KEY_REUSED':
+    case 'DAILY_METER_UNAVAILABLE':
+      return '';
     case 'NETWORK_ERROR':
       return ' Check the network and RIVALIZE_API_URL; behind a corporate proxy, set HTTPS_PROXY.';
     default:
@@ -211,6 +263,50 @@ function asPagedText(
 function callText(tool: string, args: Record<string, unknown>): string {
   const clean = Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined));
   return `${tool} ${JSON.stringify(clean)}`;
+}
+
+/**
+ * The status of a report run, without the report. GET /v1/reports/:id returns
+ * the whole stored report once it is finished (hundreds of KB); a status check
+ * needs the state and the next call, nothing else.
+ */
+export function shapeReportStatus(
+  requestedId: string,
+  d: Record<string, unknown>,
+): Record<string, unknown> {
+  const status = typeof d.status === 'string' ? d.status : 'processing';
+  const finished = status === 'completed' || status === 'no_competitors' || status === 'no_rivals';
+  const reportId = typeof d.id === 'string' ? d.id : requestedId;
+  const out: Record<string, unknown> = { report_id: reportId, status, finished };
+  for (const k of [
+    'job_id',
+    'message',
+    'product_name',
+    'product_url',
+    'competitors_analyzed',
+    'depth',
+    'section_count',
+    'created_at',
+  ]) {
+    if (d[k] !== undefined && d[k] !== null) out[k] = d[k];
+  }
+  if (!finished) {
+    out.poll_after_seconds = REPORT_STATUS_POLL_SECONDS;
+    out.next = `Still running. Check again in no less than ${REPORT_STATUS_POLL_SECONDS} seconds; a full report takes about 10 to 20 minutes.`;
+  } else if (status === 'no_rivals') {
+    out.next =
+      'The run stopped before any research and used no credits. Change the project competitors and start again.';
+  } else {
+    out.next = `Finished. Read it with ${callText('get_report', { report_id: reportId })}.`;
+  }
+  return out;
+}
+
+interface ProjectForRun {
+  id?: string;
+  name?: string;
+  url?: string | null;
+  competitors?: Array<{ name?: string; website?: string; is_active?: boolean }>;
 }
 
 const READ_ONLY = {
@@ -419,6 +515,40 @@ const AddCompetitorSchema = z
   })
   .strict();
 
+const RunReportSchema = z
+  .object({
+    project_id: z
+      .string()
+      .uuid()
+      .describe(
+        'Project UUID (from list_projects): its product and active competitors are analysed',
+      ),
+    depth: z
+      .enum(['full', 'quick'])
+      .optional()
+      .describe(
+        'full (default): full research, 15 credits per 5 competitors, uses one of the monthly reports. quick: public pages only, 1 credit per competitor, does not use a monthly report.',
+      ),
+    confirm: z
+      .boolean()
+      .optional()
+      .describe(
+        'Omit (or false) to get a PREVIEW that starts nothing. Send true ONLY after the user has seen the preview and agreed: it starts the report and uses credits.',
+      ),
+  })
+  .strict();
+
+const GetReportStatusSchema = z
+  .object({
+    report_id: text(255)
+      .min(1)
+      .describe('The report_id returned by run_report (or an id from list_reports)'),
+  })
+  .strict();
+
+/** Seconds an assistant must leave between get_report_status calls. */
+export const REPORT_STATUS_POLL_SECONDS = 30;
+
 /**
  * Trim a domain argument and check it as the schema does, for callers that
  * bypass the SDK's validation: a blank domain, a NUL or a domain longer than
@@ -575,14 +705,38 @@ export function hasDeferredRow(page: unknown): boolean {
 }
 
 /**
+ * The server, with every tool handler's result passed through
+ * `markToolResult`. One wrapper at registration, so a tool added tomorrow is
+ * marked without its author doing anything.
+ */
+function withAiDisclosure(server: McpServer): McpServer {
+  return new Proxy(server, {
+    get(target, prop) {
+      if (prop === 'registerTool') {
+        // biome-ignore lint/suspicious/noExplicitAny: forwards the SDK's generic signature untouched
+        return (name: string, config: any, handler: (...args: any[]) => any) =>
+          // biome-ignore lint/suspicious/noExplicitAny: as above
+          (target.registerTool as any)(name, config, async (...args: any[]) =>
+            markToolResult(await handler(...args)),
+          );
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+/**
  * Register the tools on the given server, backed by the given client.
  * Exported (vs. baked into index.ts) so tests can drive the handlers directly.
  */
 export function registerTools(
-  server: McpServer,
+  rawServer: McpServer,
   client: RivalizeClient,
   opts: RegisterToolsOptions = {},
 ): void {
+  // EU AI Act Article 50: every result a tool returns is marked, whichever tool.
+  const server = withAiDisclosure(rawServer);
   const allowWrites = opts.allowWrites === true;
 
   // ── list_universe_companies ──
@@ -801,7 +955,7 @@ Use when: "what reports do I have?" or "open my latest report on <product>".`,
       title: 'Read a report',
       description: `Read one competitive-intelligence report as Markdown: TL;DR, biggest threat, your blind spots, a section per competitor, and cited battlecards where the report has them.
 
-Claims the report's fabrication check flagged are shown as "[removed — unverified]", exactly as in the report itself. Do not try to fill them in.
+A figure the report's fabrication check could not match to a source is kept with "(not confirmed in the pages read)" after it, and a name or citation it found to belong to another entity is taken out, exactly as in the report itself. Do not try to fill them in.
 
 Args:
   - report_id (string, required): the report id (or its job id) from list_reports
@@ -1178,8 +1332,145 @@ Use when: "where does that come from?", "show me the sources for <competitor>'s 
     },
   );
 
+  // ── list_agent_competitors (Agent plans) ──
+  server.registerTool(
+    'list_agent_competitors',
+    {
+      title: 'List tracked competitors (Agent plan)',
+      description: `List the competitor slots of your Rivalize Agent plan: who is tracked, when each was last collected, when it refreshes next, and how many slot changes are left this calendar month. Reading is free and calls no vendor. Only Agent plan keys use this; other plans use list_competitors.
+
+Args: none.
+
+Returns JSON: { data: { level, plan, slots_total, slots_used, refresh_days, slots: [{ slot, competitor: { id, name, url } | null, collection_status, last_collected_at, next_refresh_at, changes_left_this_month, changes_reset_at }] } }.
+Use competitor.id with get_agent_competitor.
+
+Use when: "which competitors am I tracking?", "when does my data refresh?", "can I swap a competitor?".`,
+      inputSchema: ListAgentCompetitorsSchema,
+      annotations: READ_ONLY,
+    },
+    async () => {
+      try {
+        const res = await client.listAgentCompetitors();
+        return asResult(res as Record<string, unknown>);
+      } catch (err) {
+        return formatError(err);
+      }
+    },
+  );
+
+  // ── get_agent_competitor (Agent plans) ──
+  server.registerTool(
+    'get_agent_competitor',
+    {
+      title: "Get a tracked competitor's collected data (Agent plan)",
+      description: `Read the raw data Rivalize collected about one competitor in your Agent plan, by data group (core: website pages, pricing page, App Store reviews, social profiles; ads_seo: paid ads, search and traffic; extended: everything else collected). Each module carries its source, status and collected_at. There is NO analysis in it: the reasoning is yours. Reading is free and calls no vendor.
+
+Args:
+  - competitor_id (string, required): the competitor id from list_agent_competitors (its domain)
+  - group (string, optional): core | ads_seo | extended; only that group
+
+Returns JSON: { data: { id, name, url, slot, level, collection_status, collected_at, next_refresh_at, groups: { <group>: { modules: { <module>: { status, source, collected_at, data, error } } } }, not_in_plan: { <group>: { code, message } } } }.
+A group your plan level does not include is absent from groups and named in not_in_plan with code agent_module_not_in_plan. collection_status "pending" means the first collection has not finished yet.
+
+Use when: "what does <competitor> charge?", "what ads is <competitor> running?", "read everything you have on <competitor>".`,
+      inputSchema: GetAgentCompetitorSchema,
+      annotations: READ_ONLY,
+    },
+    async (args: z.infer<typeof GetAgentCompetitorSchema>) => {
+      const nul = nulArgument(args);
+      if (nul) return invalidArgument(nul, NUL_MESSAGE);
+      try {
+        const res = (await client.getAgentCompetitor(args.competitor_id.trim())) as {
+          data?: { groups?: Record<string, unknown> } & Record<string, unknown>;
+        };
+        if (args.group && res.data?.groups) {
+          const only = res.data.groups[args.group];
+          res.data = { ...res.data, groups: only === undefined ? {} : { [args.group]: only } };
+        }
+        return asResult(res as Record<string, unknown>, {
+          narrowHint: 'The data is long: ask for one group at a time with group.',
+        });
+      } catch (err) {
+        return formatError(err);
+      }
+    },
+  );
+
+  // ── get_report_status (read) ──
+  server.registerTool(
+    'get_report_status',
+    {
+      title: 'Check a report run',
+      description: `Check whether a report started with run_report has finished. Reading is free. A full report takes about 10 to 20 minutes.
+
+POLL NO MORE OFTEN THAN EVERY ${REPORT_STATUS_POLL_SECONDS} SECONDS. Each call is counted against your API allowance and the report cannot finish faster; tell the user it is running and check again later instead of calling in a loop.
+
+Args:
+  - report_id (string, required): the report_id from run_report
+
+Returns JSON: { data: { report_id, status, finished, message, ... } }. status: "processing" (still running), "completed", "no_competitors" (finished: a profile of the product alone), or "no_rivals" (stopped before any research because no competitor could be counted as a rival; no credits were used). The API does not report a percentage: status is all there is. When finished is true the result names the next call: get_report with the report_id.
+
+Use when: "is my report ready?" after run_report.`,
+      inputSchema: GetReportStatusSchema,
+      annotations: READ_ONLY,
+    },
+    async (args: z.infer<typeof GetReportStatusSchema>) => {
+      const nul = nulArgument(args);
+      if (nul) return invalidArgument(nul, NUL_MESSAGE);
+      try {
+        const res = (await client.getReportStatus(args.report_id.trim())) as {
+          data?: Record<string, unknown>;
+        };
+        return asResult({ data: shapeReportStatus(args.report_id.trim(), res.data ?? {}) });
+      } catch (err) {
+        return formatError(err, 'REPORT_NOT_FOUND');
+      }
+    },
+  );
+
   // ── add_competitor (WRITE) — registered only when writes are enabled ──
   if (!allowWrites) return;
+
+  // ── set_agent_competitor (WRITE, Agent plans) ──
+  server.registerTool(
+    'set_agent_competitor',
+    {
+      title: 'Track a competitor in a slot (Agent plan)',
+      description: `Put a competitor into one of your Agent plan's slots, or replace the one in a slot. Costs no credits and starts no analysis: it queues a collection of public data (refreshed at most every 7 days). An Agent plan tracks 3 competitors at once; each slot can be replaced once per calendar month.
+
+Args:
+  - url (string, required): the competitor website
+  - name (string, optional): display name
+  - slot (number 0-2, optional): omitted = the first empty slot; naming a filled slot replaces it and uses that slot's change for the month
+
+Returns JSON: { data: { action: assigned | changed | already_tracked, slot, replaced, collection_queued, slots_used, slots_total } }.
+Refusals pass through with their reason: agent_slot_limit (all 3 slots full, name a slot to replace) and agent_slot_change_limit (that slot already changed this month; the message gives the date it resets).
+
+Use when: "track <url> for me", "swap <old> for <new>".`,
+      inputSchema: SetAgentCompetitorSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args: z.infer<typeof SetAgentCompetitorSchema>) => {
+      const nul = nulArgument(args);
+      if (nul) return invalidArgument(nul, NUL_MESSAGE);
+      try {
+        const res = await client.setAgentCompetitor({
+          url: args.url.trim(),
+          ...(args.name ? { name: args.name } : {}),
+          ...(args.slot !== undefined ? { slot: args.slot } : {}),
+        });
+        return asResult(res as Record<string, unknown>);
+      } catch (err) {
+        return formatError(err);
+      }
+    },
+  );
+
   server.registerTool(
     'add_competitor',
     {
@@ -1215,6 +1506,123 @@ Use when: "add <url> as a competitor to my <project>".`,
       }
     },
   );
+
+  // ── run_report (WRITE): starts a REAL report ──
+  server.registerTool(
+    'run_report',
+    {
+      title: 'Run a report (uses credits)',
+      description: `Start a real competitive-intelligence report for one of your projects. THIS USES YOUR CREDITS and your monthly report allowance, and takes about 10 to 20 minutes. Paid dashboard plans only: free and Agent plan keys are refused by the API, and the refusal is passed through as it is.
+
+TWO STEPS. Never start a report the user has not agreed to.
+  1. Call run_report WITHOUT confirm. Nothing is started or charged. It returns a PREVIEW: the depth, the project and the competitors that would be analysed, the credits it will use, the credits and monthly reports you have left, and the expected time. Show the user all of it and ask.
+  2. Only when the user agrees, call run_report again with the same arguments and confirm: true. That starts the report and uses the credits.
+
+Args:
+  - project_id (string, required): the project UUID from list_projects; its product and active competitors are analysed
+  - depth (string, optional): "full" (default; full research, 15 credits per 5 competitors, uses one of the monthly reports) or "quick" (public pages only, 1 credit per competitor, does not use a monthly report)
+  - confirm (boolean, optional): true starts the report. Omit it for the preview.
+
+Returns JSON: { data: { started, report_id, ... } }. The preview has started: false, credits { to_use, remaining, remaining_after }, monthly_report_allowance, api_runs_today and expected_duration. A started run has started: true and a report_id: check it with get_report_status (no more often than every ${REPORT_STATUS_POLL_SECONDS} seconds), then read it with get_report.
+Limits: at most 3 reports can be started through the API or MCP per UTC day per account (dashboard runs are not counted). Asking again for the same project, competitors and depth within 10 minutes returns the run already started (already_started: true) and charges nothing more.
+Refusals pass through with their code: PLAN_REQUIRED, agent_model_work_not_in_plan, INSUFFICIENT_CREDITS, REPORT_LIMIT_REACHED, PLAN_COMPETITOR_LIMIT, API_REPORT_RUN_LIMIT (the message gives when it resets).
+
+Use when: "run a fresh report on <project>", after the user has seen the preview and said yes.`,
+      inputSchema: RunReportSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args: z.infer<typeof RunReportSchema>) => {
+      const nul = nulArgument(args);
+      if (nul) return invalidArgument(nul, NUL_MESSAGE);
+      const depth = args.depth ?? 'full';
+      const projectId = args.project_id.trim();
+      try {
+        const project = ((await client.getProject(projectId)) as { data?: ProjectForRun }).data;
+        const productUrl = project?.url?.trim();
+        if (!productUrl) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Error: project ${quoteInput(projectId)} has no product URL, so a report cannot be run for it. Nothing was started or charged. Add the product URL in the Rivalize dashboard.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        const rivals = (project?.competitors ?? []).filter(
+          (c) => c.is_active !== false && typeof c.website === 'string' && c.website.trim() !== '',
+        );
+        const competitorUrls = rivals.map((c) => (c.website as string).trim());
+        const nameOf = (url: string) =>
+          rivals.find((c) => (c.website as string).trim() === url)?.name ?? null;
+        const confirmed = args.confirm === true;
+
+        // ONLY `confirm: true` reaches the route that starts a report; anything
+        // else (absent, false, any other value) asks the preview route.
+        const body = { product_url: productUrl, competitor_urls: competitorUrls, depth };
+        const res = (await (confirmed ? client.runReport(body) : client.previewReport(body))) as {
+          data?: Record<string, unknown>;
+        };
+        const d = res.data ?? {};
+        const analysed = Array.isArray(d.competitor_urls) ? (d.competitor_urls as string[]) : [];
+        const competitors = analysed.map((url) => ({ name: nameOf(url), website: url }));
+        const projectOut = { id: projectId, name: project?.name ?? null, url: productUrl };
+
+        if (confirmed) {
+          const reportId = String(d.job_id ?? '');
+          const already = d.already_started === true;
+          return asResult({
+            data: {
+              started: true,
+              already_started: already,
+              report_id: reportId,
+              status_url: d.status_url,
+              depth,
+              project: projectOut,
+              competitors,
+              dropped: d.dropped ?? [],
+              message: d.message,
+              next: `Check it with ${callText('get_report_status', { report_id: reportId })}, no more often than every ${REPORT_STATUS_POLL_SECONDS} seconds; a full report takes about 10 to 20 minutes. Then read it with get_report.`,
+            },
+          });
+        }
+
+        const dup = d.already_started as { job_id?: string } | null | undefined;
+        return asResult({
+          data: {
+            started: false,
+            preview: true,
+            project: projectOut,
+            depth: d.depth ?? depth,
+            competitors,
+            ...(competitors.length === 0
+              ? {
+                  note: 'This project has no active competitors, so the report profiles the product alone, with no comparison.',
+                }
+              : {}),
+            dropped: d.dropped ?? [],
+            credits: d.credits,
+            monthly_report_allowance: d.monthly_report_allowance,
+            api_runs_today: d.api_runs_today,
+            expected_duration: d.expected_duration,
+            already_started: dup ?? null,
+            message: dup?.job_id
+              ? `NOTHING WAS STARTED. The same report was started less than 10 minutes ago (report_id ${dup.job_id}); confirming returns that run and charges nothing more. Check it with get_report_status.`
+              : 'NOTHING WAS STARTED OR CHARGED. Show this preview to the user. Only if they agree, call run_report again with the same arguments and confirm: true.',
+            to_start: callText('run_report', { project_id: projectId, depth, confirm: true }),
+          },
+        });
+      } catch (err) {
+        return formatError(err, 'PROJECT_NOT_FOUND');
+      }
+    },
+  );
 }
 
 /** Read tools — always registered. Used by tests and docs. */
@@ -1232,10 +1640,24 @@ export const READ_TOOL_NAMES = [
   'get_competitive_landscape',
   'get_freshness',
   'get_evidence',
+  'get_report_status',
 ] as const;
 
 /** Write tools — registered only with RIVALIZE_MCP_ALLOW_WRITES. */
-export const WRITE_TOOL_NAMES = ['add_competitor'] as const;
+export const WRITE_TOOL_NAMES = ['add_competitor', 'run_report'] as const;
+
+/**
+ * Agent plan tools. The reads are always registered (a dashboard plan that
+ * calls one gets the API's 403 agent_plan_required, which the tool passes through);
+ * the slot write is gated like add_competitor.
+ */
+export const AGENT_READ_TOOL_NAMES = ['list_agent_competitors', 'get_agent_competitor'] as const;
+export const AGENT_WRITE_TOOL_NAMES = ['set_agent_competitor'] as const;
 
 /** Every tool this server can register. */
-export const TOOL_NAMES = [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES] as const;
+export const TOOL_NAMES = [
+  ...READ_TOOL_NAMES,
+  ...AGENT_READ_TOOL_NAMES,
+  ...WRITE_TOOL_NAMES,
+  ...AGENT_WRITE_TOOL_NAMES,
+] as const;

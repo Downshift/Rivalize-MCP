@@ -13,6 +13,7 @@ import {
   twentyCompetitorReportMarkdown,
   universeListRow,
 } from './__fixtures__/payloads.js';
+import { stripAiDisclosure } from './__fixtures__/strip-ai-disclosure.js';
 import { RivalizeApiError, RivalizeClient } from './client.js';
 import { registerTools } from './tools.js';
 
@@ -29,7 +30,10 @@ function harness(client: Record<string, unknown>, opts: Record<string, unknown> 
   const tools = new Map<string, { description: string; handler: Handler }>();
   const server = {
     registerTool(name: string, config: { description: string }, handler: Handler) {
-      tools.set(name, { description: config.description, handler });
+      tools.set(name, {
+        description: config.description,
+        handler: async (args) => stripAiDisclosure(await handler(args)),
+      });
     },
   };
   // biome-ignore lint/suspicious/noExplicitAny: structural fakes

@@ -288,6 +288,65 @@ export class RivalizeClient {
     return `/v1/projects/${encodeURIComponent(projectId)}/landscape${qs ? `?${qs}` : ''}`;
   }
 
+  // ── Agent plans: the slots and the collected data, no analysis ──
+
+  /** The three tracked-competitor slots of an Agent plan. */
+  async listAgentCompetitors(): Promise<{ data: unknown }> {
+    return this.request('GET', '/v1/agent/competitors');
+  }
+
+  /** One tracked competitor's collected data, by module group. `id` is its domain. */
+  async getAgentCompetitor(id: string): Promise<{ data: unknown }> {
+    return this.request('GET', `/v1/agent/competitors/${encodeURIComponent(id)}`);
+  }
+
+  /** Put a competitor in a slot; with `slot` naming a filled slot, replace it. */
+  async setAgentCompetitor(params: {
+    url: string;
+    name?: string;
+    slot?: number;
+  }): Promise<{ data: unknown }> {
+    return this.request('POST', '/v1/agent/competitors', params);
+  }
+
+  // ── Report runs: run_report / get_report_status ──
+
+  /** One project with its active competitors (what run_report would analyse). */
+  async getProject(projectId: string): Promise<{ data: unknown }> {
+    return this.request('GET', `/v1/projects/${encodeURIComponent(projectId)}`);
+  }
+
+  /**
+   * POST /v1/reports: STARTS A REAL REPORT that uses the account's credits and
+   * monthly report allowance. Only run_report with `confirm: true` calls it.
+   */
+  async runReport(body: {
+    product_url: string;
+    competitor_urls: string[];
+    depth: 'full' | 'quick';
+  }): Promise<{ data: unknown }> {
+    return this.request('POST', '/v1/reports', body);
+  }
+
+  /**
+   * POST /v1/reports/preview: the same request, answered (200) with what the
+   * real call would charge and refuse. Starts, charges and counts nothing. A
+   * separate path, so a server that predates it answers 404 and can never start
+   * a report by ignoring an unknown field.
+   */
+  async previewReport(body: {
+    product_url: string;
+    competitor_urls: string[];
+    depth: 'full' | 'quick';
+  }): Promise<{ data: unknown }> {
+    return this.request('POST', '/v1/reports/preview', body);
+  }
+
+  /** Status of a report run (and, when finished, the whole stored report: callers slim it). */
+  async getReportStatus(reportId: string): Promise<{ data: unknown }> {
+    return this.request('GET', `/v1/reports/${encodeURIComponent(reportId)}`);
+  }
+
   // ── Write (queues analysis and, for a new company, universe enrichment) ──
 
   async addCompetitor(projectId: string, urls: string[]): Promise<{ data: unknown }> {

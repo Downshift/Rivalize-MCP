@@ -7,6 +7,7 @@
  * against; `server.protocol.test.ts` pins them over the real MCP protocol.
  */
 import { describe, expect, it, vi } from 'vitest';
+import { stripAiDisclosure } from './__fixtures__/strip-ai-disclosure.js';
 import { RivalizeApiError, RivalizeClient } from './client.js';
 import { registerTools } from './tools.js';
 
@@ -20,7 +21,7 @@ function harness(client: Record<string, unknown>) {
   const tools = new Map<string, Handler>();
   const server = {
     registerTool(name: string, _config: unknown, handler: Handler) {
-      tools.set(name, handler);
+      tools.set(name, async (args) => stripAiDisclosure(await handler(args)));
     },
   };
   // biome-ignore lint/suspicious/noExplicitAny: structural fakes for the SDK server and client

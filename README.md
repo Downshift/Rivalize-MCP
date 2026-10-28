@@ -16,8 +16,10 @@ reports, battlecards, timelines and evidence in your own Rivalize account.
 Every answer comes from data Rivalize has collected, with dates and sources,
 rather than from a model's memory.
 
-The server is read-only by default. One write tool, `add_competitor`, is
-available when you opt in with `RIVALIZE_MCP_ALLOW_WRITES=1`.
+The server is read-only by default. Three write tools, `add_competitor`,
+`run_report` and `set_agent_competitor`, are available when you opt in with
+`RIVALIZE_MCP_ALLOW_WRITES=1`. `run_report` starts a real report that uses your
+credits, so it asks you to preview first and confirm.
 
 ## Quick start
 
@@ -107,9 +109,10 @@ instead.
 
 ## Tools
 
-Thirteen read-only tools are always available. `add_competitor` is registered
-only when `RIVALIZE_MCP_ALLOW_WRITES` is set to `1`, `true` or `yes`; without
-it, the tool does not exist for the client.
+Sixteen read-only tools are always available: fourteen for dashboard plans and
+two for Agent plans. The three write tools (`add_competitor`, `run_report` and
+`set_agent_competitor`) are registered only when `RIVALIZE_MCP_ALLOW_WRITES` is
+set to `1`, `true` or `yes`; without it, they do not exist for the client.
 
 | Tool | Access | What it does | Key arguments |
 |------|--------|--------------|---------------|
@@ -127,6 +130,17 @@ it, the tool does not exist for the client.
 | `get_freshness` | read | When each tracked competitor in a project was last actually observed, and how | `project_id` (required) |
 | `get_evidence` | read | The sources behind the facts for your product or one competitor: URL, what it supports, and when it was read | `project_id` (required), `competitor_id` |
 | `add_competitor` | **write**, opt-in | Add competitor URLs to a project. Spends credits and queues analysis | `project_id` (required), `urls` (1-10, required) |
+| `run_report` | **write**, opt-in | **Starts a real report that uses your credits** (paid dashboard plans; about 10 to 20 minutes). Two steps: without `confirm` it starts nothing and returns a preview (depth, the project's competitors, the credits it will use, credits and monthly reports left, expected time). With `confirm: true` it starts the run. `depth` is `full` (15 credits per 5 competitors, uses a monthly report) or `quick` (1 credit per competitor). At most 3 runs a day through the API or MCP per account, and the same request within 10 minutes returns the run already started | `project_id` (required), `depth`, `confirm` |
+| `get_report_status` | read | Whether a report started with `run_report` has finished (`processing`, `completed`, `no_competitors`, `no_rivals`), and the next call. Poll no more often than every 30 seconds | `report_id` (required) |
+| `list_agent_competitors` | read | **Agent plans.** The 3 tracked-competitor slots: who is tracked, when each was last collected, when it refreshes next (every 7 days), and how many slot changes are left this calendar month | none |
+| `get_agent_competitor` | read | **Agent plans.** The raw data collected about one tracked competitor, by group (`core`, `ads_seo`, `extended`), each module with its source and `collected_at`. A group your plan does not include is listed under `not_in_plan`. Your own assistant does the analysis | `competitor_id` (the domain, required), `group` |
+| `set_agent_competitor` | **write**, opt-in | **Agent plans.** Put a competitor in a slot, or replace the one in a slot (`slot` 0-2). Uses no credits and queues a collection. Each slot can be replaced once per calendar month (the refusal gives the reset date); a fourth competitor at once is refused | `url` (required), `name`, `slot` |
+
+Agent plans cannot run work that needs a model (battlecards, teardown prose,
+reports): the API refuses those calls with an `agent_*` code and the tool shows
+you the API's sentence unchanged. `run_report` and the dashboard reads are for
+dashboard plans; the Free and Agent plans are refused by the API with
+`PLAN_REQUIRED` or `agent_model_work_not_in_plan`.
 
 `project_id` and `competitor_id` are UUIDs from `list_projects` and
 `list_competitors`. Tools that read your account only ever see your own data.
@@ -146,8 +160,10 @@ needs instead of the whole report:
 A report has only the sections it has data for; asking for any other name
 returns an error that lists the sections it does have. `section` combines with
 `competitor`, so `section: "pricing"` with `competitor: "Acme"` returns Acme's
-pricing. Claims the report's fabrication check removed appear as
-`[removed — unverified]`, exactly as in the report.
+pricing. A figure the report's fabrication check could not match to a source is
+kept and marked `(not confirmed in the pages read)`; a name or citation the
+check found to belong to another entity is taken out with its sentence, exactly
+as in the report.
 
 ### Long responses
 
@@ -182,7 +198,7 @@ Every response stays under 25,000 characters, and nothing is cut silently:
 |----------|----------|---------|-------------|
 | `RIVALIZE_API_KEY` | yes | none | Your Rivalize API key. Must start with `rk_live_`; the server exits at startup with a message if it is missing or malformed. |
 | `RIVALIZE_API_URL` | no | `https://rivalize.ai` | Origin of the Rivalize API. A key only works on the server that issued it: leave this unset for rivalize.ai, and for a self-hosted or non-production Rivalize server set it to that server's origin, or every call returns 401. |
-| `RIVALIZE_MCP_ALLOW_WRITES` | no | off | `1`, `true` or `yes` (any case) registers `add_competitor`. Any other value, or unset, keeps the server read-only. |
+| `RIVALIZE_MCP_ALLOW_WRITES` | no | off | `1`, `true` or `yes` (any case) registers the write tools: `add_competitor` (spends credits, queues analysis), `run_report` (**starts a real report that uses your credits**; preview first, then `confirm: true`) and `set_agent_competitor` (Agent plans; no credits). Any other value, or unset, keeps the server read-only. |
 | `HTTPS_PROXY` / `HTTP_PROXY` | no | none | Route requests through a corporate proxy. Lowercase forms are also read, and `HTTPS_PROXY` wins when both are set. `NO_PROXY` is honoured. Errors name the proxy host, never its credentials. |
 
 ## Troubleshooting
@@ -311,6 +327,27 @@ entry. The tests validate it against the official schema (vendored in
 `schema/`) and check that its name, version and package match `package.json`.
 
 ## Changelog
+
+### 0.5.0
+
+- New `run_report`, a write tool (opt-in with `RIVALIZE_MCP_ALLOW_WRITES=1`).
+  It **starts a real report that uses your credits**, so it works in two
+  steps: without `confirm` it starts nothing and returns a preview of the
+  depth, competitors, credits it will use and what you have left; with
+  `confirm: true` it starts the run. The API limits runs to 3 a day per account
+  and returns the run already started for the same request within 10 minutes.
+- New `get_report_status` to check whether a started report has finished.
+- `get_report` now reports figures the fabrication check could not match to a
+  source as `(not confirmed in the pages read)` instead of removing them.
+
+### 0.4.0
+
+- Agent plan tools: `list_agent_competitors` and `get_agent_competitor` (reads)
+  and `set_agent_competitor` (a write, opt-in) for the three tracked-competitor
+  slots of an Agent plan.
+- Every tool result is marked as AI-generated: a top-level `ai_generated` and
+  `ai_disclosure` in JSON results, a closing disclosure line on Markdown
+  results, and `_meta.ai_generated` on all of them. Errors are left unchanged.
 
 ### 0.3.2
 

@@ -12,7 +12,14 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { RivalizeApiError } from './client.js';
-import { READ_TOOL_NAMES, registerTools, TOOL_NAMES, WRITE_TOOL_NAMES } from './tools.js';
+import {
+  AGENT_READ_TOOL_NAMES,
+  AGENT_WRITE_TOOL_NAMES,
+  READ_TOOL_NAMES,
+  registerTools,
+  TOOL_NAMES,
+  WRITE_TOOL_NAMES,
+} from './tools.js';
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text: string }>;
@@ -80,9 +87,13 @@ describe('registerTools', () => {
   it('by default registers exactly the read tools — add_competitor is absent', () => {
     const { server, tools } = makeFakeServer();
     registerTools(server, makeClient());
-    expect([...tools.keys()].sort()).toEqual([...READ_TOOL_NAMES].sort());
-    expect(tools.size).toBe(13);
+    // 14 dashboard-plan reads plus the 2 Agent plan reads; no write tool.
+    expect([...tools.keys()].sort()).toEqual([...READ_TOOL_NAMES, ...AGENT_READ_TOOL_NAMES].sort());
+    expect(READ_TOOL_NAMES.length).toBe(14);
+    expect(tools.size).toBe(16);
     expect(tools.has('add_competitor')).toBe(false);
+    expect(tools.has('set_agent_competitor')).toBe(false);
+    expect(tools.has('run_report')).toBe(false);
     // The new discovery + report tools are named, not just counted.
     expect(tools.has('list_projects')).toBe(true);
     expect(tools.has('list_reports')).toBe(true);
@@ -93,8 +104,14 @@ describe('registerTools', () => {
     const { server, tools } = makeFakeServer();
     registerTools(server, makeClient(), { allowWrites: true });
     expect([...tools.keys()].sort()).toEqual([...TOOL_NAMES].sort());
-    expect(TOOL_NAMES.length).toBe(READ_TOOL_NAMES.length + WRITE_TOOL_NAMES.length);
+    expect(TOOL_NAMES.length).toBe(
+      READ_TOOL_NAMES.length +
+        AGENT_READ_TOOL_NAMES.length +
+        WRITE_TOOL_NAMES.length +
+        AGENT_WRITE_TOOL_NAMES.length,
+    );
     expect(tools.has('add_competitor')).toBe(true);
+    expect(tools.has('set_agent_competitor')).toBe(true);
   });
 
   it('every read tool is registered by name', () => {
