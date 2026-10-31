@@ -1,6 +1,6 @@
 {
   "$schema": "https://chat-plugin-sdk.lobehub.com/schema/lhm.plugin.schema.json",
-  "identifier": "rivalize-mcp",
+  "identifier": "downshift-rivalize-mcp",
   "name": "Rivalize Competitive Intelligence",
   "author": "Rivalize",
   "description": "Cited competitor intelligence as JSON for AI agents. Agent plan ($70/yr or $9/mo): 3 competitors at once refreshed every 7 days, everything Rivalize collects as JSON, company database access, and 500 calls/day. Every answer carries a date and a source.",
