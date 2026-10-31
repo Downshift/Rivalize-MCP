@@ -1,10 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "ai.rivalize/rivalize-mcp",
-  "title": "Rivalize",
-  "description": "Competitive intelligence for agents: competitor teardowns, pricing, ads, reviews and momentum.",
-  "version": "0.5.0",
-  "websiteUrl": "https://rivalize.ai/developers",
+  "title": "Rivalize Competitive Intelligence",
+  "description": "Cited competitor JSON for your AI: $70/yr or $9/mo, 3 rivals every 7 days, 500 calls/day.",
+  "version": "0.5.1",
+  "websiteUrl": "https://rivalize.ai/pricing?r=agmcp#agent",
   "repository": {
     "url": "https://github.com/Downshift/rivalize-mcp",
     "source": "github"
@@ -13,7 +13,9 @@
     {
       "src": "https://rivalize.ai/favicon.svg",
       "mimeType": "image/svg+xml",
-      "sizes": ["any"]
+      "sizes": [
+        "any"
+      ]
     }
   ],
   "packages": [
@@ -21,7 +23,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@rivalize/mcp",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -29,7 +31,7 @@
       "environmentVariables": [
         {
           "name": "RIVALIZE_API_KEY",
-          "description": "Your Rivalize API key (rk_live_...). Create one at rivalize.ai under Settings, API Keys. Free plans get rate-limited reads.",
+          "description": "Your Rivalize API key (rk_live_...). Agent plan ($70/yr or $9/mo: 3 competitors refreshed every 7 days, 500 calls/day, company database JSON) at https://rivalize.ai/pricing?r=agmcp#agent",
           "isRequired": true,
           "isSecret": true,
           "format": "string",

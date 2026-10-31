@@ -1,15 +1,29 @@
-# Rivalize MCP Server
+# Rivalize MCP Server (`@rivalize/mcp`)
 
 [![npm](https://img.shields.io/npm/v/@rivalize/mcp)](https://www.npmjs.com/package/@rivalize/mcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
-Sourced, dated competitive intelligence for your AI assistant, over the Model
-Context Protocol.
+Give Claude, Cursor, Cline, or your own agent cited competitor intelligence as
+JSON, over the Model Context Protocol.
+
+**The Agent plan ($70 a year or $9 a month): API and MCP only, for your own AI.**
+Rivalize collects; your own Claude, Cursor or agent does the thinking. No
+dashboard and no AI analysis, so it costs a few dollars.
+
+- **3 competitors at once, refreshed every 7 days**
+- **Everything Rivalize collects about each, as JSON**, with sources and
+  collection dates
+- **Reads Rivalize's database of companies already collected**
+  (`list_universe_companies`, `get_universe_company`)
+- **500 API and MCP calls a day** (up to 250 an hour)
+
+Get the Agent plan at [rivalize.ai/pricing](https://rivalize.ai/pricing?r=agmcp#agent). Developer and API
+documentation: [rivalize.ai/developers](https://rivalize.ai/developers?r=agmcp).
 
 ## What it does
 
 This server connects Claude, Cursor or any other MCP client to
-[Rivalize](https://rivalize.ai). Your assistant can tear down a competitor's
+[Rivalize](https://rivalize.ai/?r=agmcp). Your assistant can tear down a competitor's
 positioning, pricing, ads, social presence, reviews, hiring and momentum in one
 call, search the Rivalize universe of tracked companies, and read the projects,
 reports, battlecards, timelines and evidence in your own Rivalize account.
@@ -25,10 +39,12 @@ credits, so it asks you to preview first and confirm.
 
 Requires **Node.js 22 or newer** (`node --version`).
 
-1. Create an account at [rivalize.ai](https://rivalize.ai).
-2. Create an API key under **Dashboard → Settings → API Keys**. Keys start with
-   `rk_live_`. A key from any plan works, including the free plan, which gets
-   rate-limited reads.
+1. Choose a plan at [rivalize.ai/pricing](https://rivalize.ai/pricing?r=agmcp#agent): the **Agent** plan
+   ($70 a year or $9 a month) is built for API and MCP use. A 14-day Growth
+   trial is arranged with the Rivalize team; see the pricing page.
+2. Create an API key under **Settings → API Keys** in the Rivalize app. Keys
+   start with `rk_live_`. A key from any plan works, including the free plan,
+   which gets rate-limited reads.
 3. Add the server to your client using one of the blocks below.
 
 ### Claude Desktop
@@ -106,6 +122,18 @@ The server speaks MCP over stdin and stdout. Configure your client to launch:
 On Windows, some clients cannot launch `npx` directly because it is `npx.cmd`.
 Use `cmd` as the command and `/c npx -y @rivalize/mcp` as the arguments
 instead.
+
+## Plans and limits
+
+| Plan | Price | Competitors | What is included for MCP and API |
+|------|-------|-------------|----------------------------------|
+| **Agent** | **$70/yr or $9/mo** | **3 at once**, refreshed every 7 days | **API and MCP only, for your own AI.** Everything Rivalize collects about each competitor as JSON, access to Rivalize's database of companies already collected, and **500 API and MCP calls a day** (250 an hour). One competitor change per slot per calendar month. No dashboard and no AI analysis. |
+| **Starter** | $19/mo ($190/yr) | 3 | Web dashboard, Monday briefing, cited change alerts, plus API, MCP and webhooks. |
+| **Growth** | $79/mo ($790/yr) | 10 | Everything in Starter with broader coverage, plus recommended actions on material changes. |
+| **Pro** | $199/mo ($1,990/yr) | 25 | Everything in Growth plus cited sales battlecards (`get_battlecard`) and 1-year change history. |
+| **Agency** | $599/mo ($5,990/yr) | 50 | Unlimited client workspaces, dashboard, battlecards, webhooks, plus API and MCP. |
+
+Prices and limits are always current at [rivalize.ai/pricing](https://rivalize.ai/pricing?r=agmcp#agent).
 
 ## Tools
 
@@ -242,7 +270,7 @@ unset unless the key was issued by a different Rivalize server.
 
 Reads are available on every plan. Some capabilities, such as battlecards and
 full timeline or landscape history, need a higher plan; the error says which
-and links to [rivalize.ai/pricing](https://rivalize.ai/pricing).
+and links to [rivalize.ai/pricing](https://rivalize.ai/pricing?r=agmcp#agent).
 
 ## Docker
 
@@ -305,7 +333,7 @@ until it is resolved.
 
 Treat your API key as a credential. Keep it in your client's `env` block or
 your shell environment, never in a shared or committed file, and revoke a
-leaked key under **Dashboard → Settings → API Keys**.
+leaked key under **Settings → API Keys**.
 
 ## Contributing
 
@@ -327,6 +355,14 @@ entry. The tests validate it against the official schema (vendored in
 `schema/`) and check that its name, version and package match `package.json`.
 
 ## Changelog
+
+### 0.5.1
+
+- README, `llms-install.md`, directory listings and `server.json` now lead
+  with the Agent plan ($70 a year or $9 a month: 3 competitors at once,
+  refreshed every 7 days, everything collected as JSON, access to the
+  universe of already-collected companies, 500 API and MCP calls a day).
+  No change to the tools.
 
 ### 0.5.0
 

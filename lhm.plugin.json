@@ -1,0 +1,36 @@
+{
+  "$schema": "https://chat-plugin-sdk.lobehub.com/schema/lhm.plugin.schema.json",
+  "identifier": "rivalize-mcp",
+  "name": "Rivalize Competitive Intelligence",
+  "author": "Rivalize",
+  "description": "Cited competitor intelligence as JSON for AI agents. Agent plan ($70/yr or $9/mo): 3 competitors at once refreshed every 7 days, everything Rivalize collects as JSON, company database access, and 500 calls/day. Every answer carries a date and a source.",
+  "homepage": "https://rivalize.ai/pricing?r=agmcp#agent",
+  "repository": "https://github.com/Downshift/rivalize-mcp",
+  "license": "MIT",
+  "version": "0.5.1",
+  "tags": [
+    "competitive-intelligence",
+    "competitor-analysis",
+    "market-research",
+    "sales-battlecards",
+    "product-marketing",
+    "citations",
+    "json-api",
+    "mcp"
+  ],
+  "runtime": {
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@rivalize/mcp"
+    ],
+    "env": {
+      "RIVALIZE_API_KEY": {
+        "description": "Your Rivalize API key (rk_live_...). Agent plan: $70/yr or $9/mo, 500 calls/day, 3 competitors refreshed every 7 days. Plans at https://rivalize.ai/pricing?r=agmcp#agent",
+        "required": true,
+        "secret": true
+      }
+    }
+  }
+}
