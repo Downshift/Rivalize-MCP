@@ -14,6 +14,8 @@ import {
   AI_DISCLOSURE_FIELD,
   AI_GENERATED_LINE,
   AI_GENERATED_MARKER_NAME,
+  GENERATED_CONTENT_NOTICE,
+  GENERATED_CONTENT_NOTICE_FIELD,
   MCP_DISCLOSURE_TEXT,
   markToolResult,
 } from './ai-disclosure.js';
@@ -60,6 +62,8 @@ describe('over a real MCP client', () => {
       const body = JSON.parse(content[0].text);
       expect(body[AI_GENERATED_MARKER_NAME]).toBe(true);
       expect(body[AI_DISCLOSURE_FIELD]).toBe(AI_CHAT_DISCLOSURE);
+      // the plain-words notice travels in the same JSON, as a field.
+      expect(body[GENERATED_CONTENT_NOTICE_FIELD]).toBe(GENERATED_CONTENT_NOTICE);
       expect(body.data).toBeDefined();
       expect(res._meta?.[AI_GENERATED_MARKER_NAME]).toBe(true);
     } finally {
@@ -118,6 +122,7 @@ describe('markToolResult', () => {
     expect(Object.keys(out.structuredContent ?? {})).toEqual([
       AI_GENERATED_MARKER_NAME,
       AI_DISCLOSURE_FIELD,
+      GENERATED_CONTENT_NOTICE_FIELD,
       'data',
     ]);
   });
@@ -130,13 +135,19 @@ describe('markToolResult', () => {
 });
 
 describe('the wording is pinned', () => {
-  it('uses the same marker name, visible line, field name and chat disclosure everywhere', () => {
+  it('uses the same marker name, visible line, field name, chat disclosure and notice everywhere', () => {
     expect(AI_GENERATED_MARKER_NAME).toBe('ai_generated');
     expect(AI_GENERATED_LINE).toBe('AI-generated, sources cited');
     expect(AI_DISCLOSURE_FIELD).toBe('ai_disclosure');
     expect(AI_CHAT_DISCLOSURE).toBe(
       'You are chatting with an AI. Answers are AI-generated and can be wrong: check the cited sources.',
     );
-    expect(MCP_DISCLOSURE_TEXT).toBe(`${AI_GENERATED_LINE}. ${AI_CHAT_DISCLOSURE}`);
+    expect(GENERATED_CONTENT_NOTICE).toBe(
+      'Rivalize reads public sources and uses AI to summarise them. It can make mistakes, so check important details at the source.',
+    );
+    expect(GENERATED_CONTENT_NOTICE_FIELD).toBe('notice');
+    expect(MCP_DISCLOSURE_TEXT).toBe(
+      `${AI_GENERATED_LINE}. ${AI_CHAT_DISCLOSURE} ${GENERATED_CONTENT_NOTICE}`,
+    );
   });
 });

@@ -87,10 +87,12 @@ describe('registerTools', () => {
   it('by default registers exactly the read tools — add_competitor is absent', () => {
     const { server, tools } = makeFakeServer();
     registerTools(server, makeClient());
-    // 14 dashboard-plan reads plus the 2 Agent plan reads; no write tool.
+    // 16 dashboard-plan reads + the 2 Agent plan reads; no write tool.
     expect([...tools.keys()].sort()).toEqual([...READ_TOOL_NAMES, ...AGENT_READ_TOOL_NAMES].sort());
-    expect(READ_TOOL_NAMES.length).toBe(14);
-    expect(tools.size).toBe(16);
+    expect(READ_TOOL_NAMES.length).toBe(16);
+    expect(tools.size).toBe(18);
+    expect(tools.has('get_competitor_posts')).toBe(true);
+    expect(tools.has('rank_competitor_accounts')).toBe(true);
     expect(tools.has('add_competitor')).toBe(false);
     expect(tools.has('set_agent_competitor')).toBe(false);
     expect(tools.has('run_report')).toBe(false);

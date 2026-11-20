@@ -143,7 +143,10 @@ describe('registration', () => {
     expect(run).toMatch(/USES YOUR CREDITS/);
     expect(run).toMatch(/WITHOUT confirm/);
     expect(run).toMatch(/confirm: true/);
-    expect(run).toMatch(/3 reports can be started/);
+    expect(run).toMatch(/limited number of reports per UTC day/);
+    // The limit is the API's to state (it differs by environment and can change): no count is hardcoded here.
+    expect(run).not.toMatch(/at most d+ reports/i);
+    expect(run).toMatch(/warning sentence: show it to the user/);
     const status = reg.description('get_report_status');
     expect(status).toContain(`EVERY ${REPORT_STATUS_POLL_SECONDS} SECONDS`);
     expect(REPORT_STATUS_POLL_SECONDS).toBe(30);
@@ -268,6 +271,42 @@ describe('run_report: confirm true makes exactly one real POST', () => {
     });
     expect(d.next).toContain(`get_report_status {"report_id":"${JOB}"}`);
     expect(d.next).toContain(`${REPORT_STATUS_POLL_SECONDS} seconds`);
+  });
+
+  it('relays the runs left today and the warning the API sends, and null when absent', async () => {
+    const warning =
+      '2 report runs are left today through the API or MCP (18 of 20 used; the allowance resets at 2026-10-29T00:00:00.000Z). Reports started from the dashboard are not counted.';
+    const runsToday = { limit: 20, used: 18, remaining: 2, resets_at: '2026-10-29T00:00:00.000Z' };
+    const warned = makeFetch({
+      [`GET /v1/projects/${PROJECT_ID}`]: { status: 200, body: PROJECT },
+      'POST /v1/reports': {
+        status: 202,
+        body: { data: { ...STARTED.data, api_runs_today: runsToday, warning } },
+      },
+    });
+    const w = json(
+      await register(warned.impl, true).call('run_report', {
+        project_id: PROJECT_ID,
+        confirm: true,
+      }),
+    ).data;
+    expect(w.started).toBe(true);
+    expect(w.warning).toBe(warning);
+    expect(w.api_runs_today).toEqual(runsToday);
+
+    const quiet = makeFetch({
+      [`GET /v1/projects/${PROJECT_ID}`]: { status: 200, body: PROJECT },
+      'POST /v1/reports': { status: 202, body: STARTED },
+    });
+    const q = json(
+      await register(quiet.impl, true).call('run_report', {
+        project_id: PROJECT_ID,
+        confirm: true,
+      }),
+    ).data;
+    expect(q.started).toBe(true);
+    expect(q.warning).toBeNull();
+    expect(q.api_runs_today).toBeNull();
   });
 
   it('an already_started answer is reported as such', async () => {
@@ -426,6 +465,28 @@ describe('get_report_status', () => {
     expect(d).toMatchObject({ status: 'completed', finished: true, competitors_analyzed: 2 });
     expect(d.next).toBe(`Finished. Read it with get_report {"report_id":"${JOB}"}.`);
     expect(d.poll_after_seconds).toBeUndefined();
+  });
+
+  it('shapeReportStatus: a report delivered without its analysis says so', () => {
+    const shaped = shapeReportStatus(JOB, {
+      status: 'completed',
+      analysis_ran: false,
+      analysis_notice: 'The written analysis did not run for this report.',
+    });
+    expect(shaped).toMatchObject({
+      status: 'completed',
+      finished: true,
+      analysis_ran: false,
+      analysis_notice: 'The written analysis did not run for this report.',
+    });
+    // A report that ran, or an API that predates the field, adds neither null nor false.
+    expect(shapeReportStatus(JOB, { status: 'completed', analysis_ran: true })).toMatchObject({
+      analysis_ran: true,
+    });
+    expect(shapeReportStatus(JOB, { status: 'completed' })).not.toHaveProperty('analysis_ran');
+    expect(
+      shapeReportStatus(JOB, { status: 'completed', analysis_ran: true, analysis_notice: null }),
+    ).not.toHaveProperty('analysis_notice');
   });
 
   it('shapeReportStatus: no_rivals is finished and used no credits; no_competitors is finished', () => {

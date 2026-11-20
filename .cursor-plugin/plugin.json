@@ -1,6 +1,6 @@
 {
   "name": "rivalize",
-  "version": "0.5.1",
+  "version": "0.6.1",
   "description": "Cited competitor intelligence as JSON for Cursor. Agent plan ($70/yr or $9/mo): 3 competitors refreshed every 7 days, everything collected as JSON, company database access, and 500 calls a day. Rivalize collects; your own AI does the thinking.",
   "author": {
     "name": "Rivalize",

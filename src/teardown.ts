@@ -137,6 +137,20 @@ function bullets(items: string[], max = 8): string {
     .join('\n');
 }
 
+/** The next step for an Agent-plan key (no dashboard): track the company in one of its slots. */
+export function agentSlotHint(canWrite: boolean): string {
+  return canWrite
+    ? 'Track it in one of your Agent slots with set_agent_competitor (list_agent_competitors shows your slots), then read it with get_agent_competitor.'
+    : 'Track it in one of your Agent slots: turn on the MCP write tools and call set_agent_competitor, or POST /api/v1/agent/competitors (list_agent_competitors shows your slots). Then read it with get_agent_competitor.';
+}
+
+/** The dashboard-plan sentence `enrichmentHint` returns, so a caller can swap it for an Agent key. */
+export const DASHBOARD_ENRICHMENT_HINT =
+  'Add it as a competitor in your Rivalize dashboard to queue enrichment, then re-run this teardown.';
+
+export const ADD_COMPETITOR_ENRICHMENT_HINT =
+  'Use add_competitor to queue enrichment, then re-run this teardown.';
+
 export interface TeardownOptions {
   nowMs: number;
   origin?: string;
@@ -153,10 +167,11 @@ export interface TeardownOptions {
  * registered: pointing an agent at a tool it does not have sends it looking for
  * one (writes are off by default).
  */
-export function enrichmentHint(canAddCompetitor = false): string {
-  return canAddCompetitor
-    ? 'Use add_competitor to queue enrichment, then re-run this teardown.'
-    : 'Add it as a competitor in your Rivalize dashboard to queue enrichment, then re-run this teardown.';
+export function enrichmentHint(canAddCompetitor = false, agentPlan = false): string {
+  // An Agent-plan customer has no dashboard. The next step
+  // is a slot, set with set_agent_competitor (a write tool) or the Agent endpoint.
+  if (agentPlan) return agentSlotHint(canAddCompetitor);
+  return canAddCompetitor ? ADD_COMPETITOR_ENRICHMENT_HINT : DASHBOARD_ENRICHMENT_HINT;
 }
 
 export function renderTeardown(company: Dict, opts: TeardownOptions): string {
@@ -193,6 +208,18 @@ export function renderTeardown(company: Dict, opts: TeardownOptions): string {
   out.push(
     `> Everything Rivalize has observed on ${name} — positioning, pricing, ads, social, reviews, hiring, momentum. Source-backed and continuously monitored, not a one-shot guess.`,
   );
+  // where the profile comes from and how old it is, stated before any figure.
+  if (company.source === 'tracked_competitor') {
+    out.push('');
+    out.push(
+      `> **Built from your tracked competitor.** The shared Rivalize universe has no published profile for ${name}, so this teardown uses what your account holds for it (identity, pricing, positioning, social followers, review ratings, funding). It has no universe ads, rankings or signals layers, so those sections are absent, not clear.`,
+    );
+  }
+  const refreshInfo = obj(company.refresh);
+  if (refreshInfo.stale === true && str(refreshInfo.notice)) {
+    out.push('');
+    out.push(`> **Not current.** ${str(refreshInfo.notice)}`);
+  }
   if (!enriched) {
     out.push('');
     out.push(
@@ -409,6 +436,23 @@ export function renderTeardown(company: Dict, opts: TeardownOptions): string {
         `${appName ? `App Store (${appName})` : 'App Store'}: ${rating.toFixed(1)}★${reviewCount !== null ? ` (${fmtCount(reviewCount)} reviews)` : ''}`,
       );
     if (themesR.length) out.push(`\n**What customers say:**\n${bullets(themesR)}`);
+  }
+
+  // ratings held for a tracked competitor (G2, Trustpilot, ...), one per source.
+  const reviewSources = list(reviews.sources)
+    .map((r) => {
+      const rr = obj(r);
+      const sourceName = str(rr.source);
+      const rate = num(rr.rating);
+      if (!sourceName || rate === null) return '';
+      const count = num(rr.reviewCount);
+      return `${sourceName}: ${rate.toFixed(1)}★${count !== null ? ` (${fmtCount(count)} reviews)` : ''}`;
+    })
+    .filter(Boolean);
+  if (reviewSources.length) {
+    out.push('');
+    out.push('## Reviews (by source)');
+    out.push(bullets(reviewSources));
   }
 
   // ---- Hiring ----

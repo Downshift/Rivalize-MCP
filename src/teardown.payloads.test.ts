@@ -10,7 +10,7 @@ import { demoSeedCompany, exampleScaleCompany } from './__fixtures__/payloads.js
 import { renderTeardown } from './teardown.js';
 
 /** The day these profiles are read on. */
-const QA_DAY = Date.parse('2026-10-01T12:00:00Z');
+const PROFILE_DAY = Date.parse('2026-10-01T12:00:00Z');
 
 function section(md: string, heading: string): string {
   const at = md.indexOf(`## ${heading}`);
@@ -21,7 +21,7 @@ function section(md: string, heading: string): string {
 
 describe('a null momentum is "not scored", never 0', () => {
   it('demo profile (momentum null, below-signal-threshold): no 0/100 and no low-momentum weakness', () => {
-    const md = renderTeardown(demoSeedCompany(), { nowMs: QA_DAY });
+    const md = renderTeardown(demoSeedCompany(), { nowMs: PROFILE_DAY });
     expect(md).not.toContain('0/100');
     expect(md).not.toContain('Low momentum');
     expect(md).toContain('Momentum: not scored');
@@ -31,7 +31,7 @@ describe('a null momentum is "not scored", never 0', () => {
   it('companion: a measured low score still renders and still yields the weakness', () => {
     const md = renderTeardown(
       { domain: 'thin.co', name: 'Thin', momentum: { momentum: 12 } },
-      { nowMs: QA_DAY },
+      { nowMs: PROFILE_DAY },
     );
     expect(md).toContain('Momentum: 12/100');
     expect(md).toContain('Low momentum (12/100)');
@@ -40,7 +40,7 @@ describe('a null momentum is "not scored", never 0', () => {
   it('companion: a measured score of exactly 0 is still a score', () => {
     const md = renderTeardown(
       { domain: 'z.co', name: 'Z', momentum: { momentum: 0 } },
-      { nowMs: QA_DAY },
+      { nowMs: PROFILE_DAY },
     );
     expect(md).toContain('Momentum: 0/100');
   });
@@ -48,7 +48,7 @@ describe('a null momentum is "not scored", never 0', () => {
 
 describe('an ad counts as active only if seen in the last 30 days', () => {
   it('example.com (only creative last seen 2025-06-28): no "active ad(s)", says when it was last seen', () => {
-    const md = renderTeardown(exampleScaleCompany(), { nowMs: QA_DAY });
+    const md = renderTeardown(exampleScaleCompany(), { nowMs: PROFILE_DAY });
     const ads = section(md, 'Their ads');
     expect(ads).not.toMatch(/\d+ active ad\(s\)/);
     expect(ads).toContain('no ad seen in the last 30 days (last seen 2025-06-28)');
@@ -60,12 +60,12 @@ describe('an ad counts as active only if seen in the last 30 days', () => {
     ads.creatives = [
       { ...(ads.creatives as Array<Record<string, unknown>>)[0], lastSeen: '2026-09-21T00:00:00Z' },
     ];
-    const md = renderTeardown(company, { nowMs: QA_DAY });
+    const md = renderTeardown(company, { nowMs: PROFILE_DAY });
     expect(section(md, 'Their ads')).toContain('1 active ad(s)');
   });
 
   it('an unchecked count (no creatives, ads layer last checked 114 days ago) is not called active', () => {
-    const md = renderTeardown(demoSeedCompany(), { nowMs: QA_DAY });
+    const md = renderTeardown(demoSeedCompany(), { nowMs: PROFILE_DAY });
     const ads = section(md, 'Their ads');
     expect(ads).not.toContain('3 active ad(s)');
     expect(ads).toContain('3 ad(s) reported active when last checked on 2026-06-09');
@@ -75,7 +75,7 @@ describe('an ad counts as active only if seen in the last 30 days', () => {
 
 describe('hooks are ad copy, never a page title', () => {
   it('example.com: "Home \\ Example Co" is not shown, and no hooks section without ad copy', () => {
-    const md = renderTeardown(exampleScaleCompany(), { nowMs: QA_DAY });
+    const md = renderTeardown(exampleScaleCompany(), { nowMs: PROFILE_DAY });
     expect(md).not.toContain('Home \\ Example Co');
     expect(md).not.toContain("Hooks they're running");
     expect(md).not.toContain('their hooks');
@@ -90,7 +90,7 @@ describe('hooks are ad copy, never a page title', () => {
     (company.ads as Record<string, unknown>).creatives = [
       { text: 'Meet Example Co, your research partner.', lastSeen: '2026-09-25T00:00:00Z' },
     ];
-    const md = renderTeardown(company, { nowMs: QA_DAY });
+    const md = renderTeardown(company, { nowMs: PROFILE_DAY });
     expect(section(md, 'Their ads')).toContain("Hooks they're running");
     expect(section(md, 'Their ads')).toContain('Meet Example Co, your research partner.');
   });
@@ -99,7 +99,7 @@ describe('hooks are ad copy, never a page title', () => {
 describe('"Go deeper" points at the route the MCP itself reads', () => {
   it('names get_universe_company and the v1 route on the configured origin', () => {
     const md = renderTeardown(exampleScaleCompany(), {
-      nowMs: QA_DAY,
+      nowMs: PROFILE_DAY,
       origin: 'https://self-hosted.rivalize.example',
     });
     const deeper = section(md, 'Go deeper');
@@ -126,7 +126,7 @@ describe('pricing keeps the billing period and contact-sales tiers the payload c
           ],
         },
       },
-      { nowMs: QA_DAY },
+      { nowMs: PROFILE_DAY },
     );
     const pricing = section(md, 'Their pricing');
     expect(pricing).toContain('Basic — $10 per user / month');
@@ -136,7 +136,7 @@ describe('pricing keeps the billing period and contact-sales tiers the payload c
 
   it('demo profile (no period, no Enterprise in the payload): nothing is invented', () => {
     const pricing = section(
-      renderTeardown(demoSeedCompany(), { nowMs: QA_DAY }),
+      renderTeardown(demoSeedCompany(), { nowMs: PROFILE_DAY }),
       'Their pricing',
     );
     expect(pricing).toContain('- Free — $0');
@@ -148,12 +148,12 @@ describe('pricing keeps the billing period and contact-sales tiers the payload c
 
 describe('demo seed data is labelled', () => {
   it('demo profile (signals.demoSeed, sourceTags demo-snapshot) carries a demo-data notice', () => {
-    const md = renderTeardown(demoSeedCompany(), { nowMs: QA_DAY });
+    const md = renderTeardown(demoSeedCompany(), { nowMs: PROFILE_DAY });
     expect(md).toMatch(/demo seed data/i);
   });
 
   it('companion: a measured profile carries no such notice', () => {
-    const md = renderTeardown(exampleScaleCompany(), { nowMs: QA_DAY });
+    const md = renderTeardown(exampleScaleCompany(), { nowMs: PROFILE_DAY });
     expect(md).not.toMatch(/demo seed data/i);
   });
 });
@@ -172,7 +172,7 @@ describe('the universe API as currently served', () => {
         isDemo: true,
         demoWithheld: ['ads', 'reviews', 'features.themes'],
       },
-      { nowMs: QA_DAY },
+      { nowMs: PROFILE_DAY },
     );
     expect(md).toContain('Includes demo seed data');
     expect(md).toContain('ads, reviews, features.themes');
@@ -187,7 +187,7 @@ describe('the universe API as currently served', () => {
         layerFreshness: { ads: '2026-06-09T00:00:00.000Z' },
         ads: { activeAdCount: null, observedAdCount: 3, activeWindowDays: 30 },
       },
-      { nowMs: QA_DAY },
+      { nowMs: PROFILE_DAY },
     );
     const ads = section(md, 'Their ads');
     expect(ads).toContain('3 ad(s) reported active when last checked on 2026-06-09');
@@ -204,7 +204,7 @@ describe('the universe API as currently served', () => {
         pricing: { plans: [{ name: 'Pro', price: '$10' }] },
         ads: { activeAdCount: 0, observedAdCount: 0, activeWindowDays: 30 },
       },
-      { nowMs: QA_DAY },
+      { nowMs: PROFILE_DAY },
     );
     expect(md).toContain('No active paid ads detected');
   });

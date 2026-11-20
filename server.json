@@ -3,7 +3,7 @@
   "name": "ai.rivalize/rivalize-mcp",
   "title": "Rivalize Competitive Intelligence",
   "description": "Cited competitor JSON for your AI: $70/yr or $9/mo, 3 rivals every 7 days, 500 calls/day.",
-  "version": "0.5.1",
+  "version": "0.6.1",
   "websiteUrl": "https://rivalize.ai/pricing?r=agmcp#agent",
   "repository": {
     "url": "https://github.com/Downshift/rivalize-mcp",
@@ -23,7 +23,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@rivalize/mcp",
-      "version": "0.5.1",
+      "version": "0.6.1",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

@@ -9,10 +9,12 @@ import {
   AI_CHAT_DISCLOSURE,
   AI_DISCLOSURE_FIELD,
   AI_GENERATED_MARKER_NAME,
+  GENERATED_CONTENT_NOTICE,
+  GENERATED_CONTENT_NOTICE_FIELD,
   MCP_DISCLOSURE_TEXT,
 } from '../ai-disclosure.js';
 
-const PREFIX = `"${AI_GENERATED_MARKER_NAME}":true,"${AI_DISCLOSURE_FIELD}":${JSON.stringify(AI_CHAT_DISCLOSURE)}`;
+const PREFIX = `"${AI_GENERATED_MARKER_NAME}":true,"${AI_DISCLOSURE_FIELD}":${JSON.stringify(AI_CHAT_DISCLOSURE)},"${GENERATED_CONTENT_NOTICE_FIELD}":${JSON.stringify(GENERATED_CONTENT_NOTICE)}`;
 
 interface R {
   content: Array<{ type: string; text: string }>;
@@ -35,6 +37,9 @@ export function stripAiDisclosure<T extends R>(res: T): T {
     const kept = { ...res.structuredContent };
     delete kept[AI_GENERATED_MARKER_NAME];
     delete kept[AI_DISCLOSURE_FIELD];
+    if (kept[GENERATED_CONTENT_NOTICE_FIELD] === GENERATED_CONTENT_NOTICE) {
+      delete kept[GENERATED_CONTENT_NOTICE_FIELD];
+    }
     out.structuredContent = kept;
   }
   if (out._meta) {

@@ -14,11 +14,18 @@
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { shapeAgentRead } from './agent-read.js';
 import { markToolResult } from './ai-disclosure.js';
 import { RivalizeApiError, type RivalizeClient } from './client.js';
 import { type FitOptions, fitJson, normalizeListPage } from './fit-json.js';
 import { paginateMarkdown, selectSections } from './markdown-pages.js';
-import { enrichmentHint, renderTeardown } from './teardown.js';
+import {
+  ADD_COMPETITOR_ENRICHMENT_HINT,
+  agentSlotHint,
+  DASHBOARD_ENRICHMENT_HINT,
+  enrichmentHint,
+  renderTeardown,
+} from './teardown.js';
 import {
   normalizeDomain,
   shapeUniverseCompany,
@@ -102,6 +109,21 @@ const GetAgentCompetitorSchema = z
       .optional()
       .describe(
         'Return only this data group (core, ads_seo, extended). Default: every group your plan includes.',
+      ),
+    module: text(40)
+      .min(1)
+      .optional()
+      .describe(
+        'Return only this module (for example website, pricing, reviews, social, ads, seo). Use it to read one module of a big site; with group, it must be in that group.',
+      ),
+    page: z
+      .number()
+      .int()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe(
+        'Page number when the answer is too long for one reply (the reply says "page N of M" and the next call). Default 1.',
       ),
   })
   .strict();
@@ -266,6 +288,63 @@ function callText(tool: string, args: Record<string, unknown>): string {
 }
 
 /**
+ * The account ranking, shaped to fit the MCP's 25,000-character answer.
+ *
+ * Unshaped, a 37-account project went over the limit
+ * and fitJson capped `accounts` at 10, which dropped 4 of the 6 accounts with a video
+ * above 500 likes. So:
+ *   - each row keeps its figures and the best post / best video as link, date and
+ *     numbers only (no caption, thumbnail or duration);
+ *   - `videoOver500Likes` is built from EVERY row before any cap: the counts and each
+ *     account whose answer is yes, with its video's link. fitJson never drops it.
+ */
+export function shapeAccountsRanking(res: Record<string, unknown>): Record<string, unknown> {
+  const data = (res.data ?? null) as Record<string, unknown> | null;
+  if (!(data && Array.isArray(data.accounts))) return res;
+  const rows = data.accounts as Array<Record<string, unknown>>;
+  const postRef = (p: unknown) => {
+    if (!p || typeof p !== 'object') return null;
+    const x = p as Record<string, unknown>;
+    return {
+      platform: x.platform ?? null,
+      mediaType: x.mediaType ?? null,
+      postedAt: x.postedAt ?? null,
+      likes: x.likes ?? null,
+      views: x.views ?? null,
+      url: x.url ?? null,
+    };
+  };
+  const accounts = rows.map((a): Record<string, unknown> => {
+    const { bestVideo, bestPost, ...rest } = a;
+    return { ...rest, bestPost: postRef(bestPost), bestVideo: postRef(bestVideo) };
+  });
+  const answer = (v: boolean | null) =>
+    rows.filter((a) => (a.hasVideoOver500Likes ?? null) === v).length;
+  const { accounts: _a, ...head } = data;
+  return {
+    ...res,
+    data: {
+      ...head,
+      videoOver500Likes: {
+        yes: answer(true),
+        no: answer(false),
+        cannotTell: answer(null),
+        accountsWithYes: accounts
+          .filter((a) => a.hasVideoOver500Likes === true)
+          .map((a) => ({
+            rank: a.rank,
+            competitorName: a.competitorName,
+            platform: a.platform,
+            handle: a.handle,
+            bestVideo: a.bestVideo,
+          })),
+      },
+      accounts,
+    },
+  };
+}
+
+/**
  * The status of a report run, without the report. GET /v1/reports/:id returns
  * the whole stored report once it is finished (hundreds of KB); a status check
  * needs the state and the next call, nothing else.
@@ -287,6 +366,10 @@ export function shapeReportStatus(
     'depth',
     'section_count',
     'created_at',
+    // false, with the sentence to show, when the report was delivered
+    // without its written analysis. Absent from an API that predates it.
+    'analysis_ran',
+    'analysis_notice',
   ]) {
     if (d[k] !== undefined && d[k] !== null) out[k] = d[k];
   }
@@ -385,6 +468,70 @@ const GetIntelligenceSchema = z
 
 const GetBattlecardSchema = z
   .object({ competitor_id: z.string().uuid().describe('Competitor UUID from list_competitors') })
+  .strict();
+
+/** the platforms a competitor's posts are stored for ("x" is twitter). */
+const POST_PLATFORMS = [
+  'tiktok',
+  'youtube',
+  'twitter',
+  'x',
+  'instagram',
+  'linkedin',
+  'facebook',
+] as const;
+
+const GetCompetitorPostsSchema = z
+  .object({
+    competitor_id: z.string().uuid().describe('Competitor UUID from list_competitors'),
+    platform: z.enum(POST_PLATFORMS).optional().describe('Only posts from this platform'),
+    days: z
+      .number()
+      .int()
+      .min(1)
+      .max(365)
+      .optional()
+      .describe(
+        'Only posts published in the last N days (1-365, default 90). Posts with no known publish date are left out.',
+      ),
+    type: z
+      .enum(['video', 'image', 'text'])
+      .optional()
+      .describe('Only videos, images or text posts'),
+    min_likes: z
+      .number()
+      .int()
+      .min(0)
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional()
+      .describe(
+        'Only posts with at least this many likes. A post whose likes the platform does not publish never matches.',
+      ),
+    sort: z
+      .enum(['likes', 'views', 'recent'])
+      .optional()
+      .describe('likes (default), views or recent'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('How many posts to return (1-100, default 20)'),
+  })
+  .strict();
+
+const RankAccountsSchema = z
+  .object({
+    project_id: z.string().uuid().describe('Project UUID from list_projects'),
+    days: z
+      .number()
+      .int()
+      .min(1)
+      .max(365)
+      .optional()
+      .describe('Look at posts published in the last N days (1-365, default 90)'),
+  })
   .strict();
 
 const ListProjectsSchema = z.object({}).strict();
@@ -634,11 +781,52 @@ async function findTrackedCompetitor(
  * account, "add it as a competitor" is wrong too: say it is tracked and point
  * at the account-scoped reads that do have data for it.
  */
+/**
+ * The slots of an Agent-plan key, or null for any other key (or when they cannot be
+ * read). Used only on the "not in the universe" path, to give an Agent customer a
+ * next step that exists for them: they have no dashboard.
+ */
+async function agentSlotsOf(
+  client: RivalizeClient,
+): Promise<Array<{ slot: number; id: string }> | null> {
+  // A key the API has told is not an Agent key is not asked again in this session:
+  // a dashboard-plan caller pays for this probe at most once.
+  if (notAgentKeys.has(client)) return null;
+  try {
+    const res = (await client.listAgentCompetitors()) as {
+      data?: { slots?: Array<{ slot?: unknown; competitor?: { id?: unknown } | null }> };
+    };
+    const slots = res?.data?.slots;
+    if (!Array.isArray(slots)) {
+      notAgentKeys.add(client);
+      return null;
+    }
+    return slots.flatMap((s) =>
+      s.competitor && typeof s.competitor.id === 'string' && typeof s.slot === 'number'
+        ? [{ slot: s.slot, id: s.competitor.id }]
+        : [],
+    );
+  } catch (err) {
+    if (err instanceof RivalizeApiError && err.status === 403) notAgentKeys.add(client);
+    return null;
+  }
+}
+
+const notAgentKeys = new WeakSet<object>();
+
 async function notInUniverse(
   client: RivalizeClient,
   domain: string,
   allowWrites: boolean,
 ): Promise<ToolResult> {
+  const agentSlots = await agentSlotsOf(client);
+  if (agentSlots) {
+    const inSlot = agentSlots.find((s) => s.id === normalizeDomain(domain));
+    const text = inSlot
+      ? `${quoteInput(domain)} is in your Agent slot ${inSlot.slot}, but it has no Rivalize universe profile, so there is no universe teardown for it. Read what was collected for your slot instead: ${callText('get_agent_competitor', { competitor_id: inSlot.id })}.`
+      : `${quoteInput(domain)} is not in the Rivalize universe yet, so there is no profile to report. ${enrichmentHint(allowWrites, true)}`;
+    return { content: [{ type: 'text', text }] };
+  }
   const tracked = await findTrackedCompetitor(client, domain);
   if (tracked) {
     const where = tracked.projectName ? ` (project "${tracked.projectName}")` : '';
@@ -649,7 +837,7 @@ async function notInUniverse(
       content: [
         {
           type: 'text',
-          text: `${quoteInput(domain)} is already tracked in your account as "${tracked.name}"${where}, but it has no Rivalize universe profile yet, so there is no universe profile or teardown for it. Read what your account has on it instead: ${callText('get_competitor_intelligence', { competitor_id: tracked.id })}, or ${reports}.`,
+          text: `${quoteInput(domain)} is already tracked in your account as "${tracked.name}"${where}, but its profile could not be built from your account data, and the Rivalize universe has none. Read what your account has on it instead: ${callText('get_competitor_intelligence', { competitor_id: tracked.id })}, or ${reports}.`,
         },
       ],
     };
@@ -658,7 +846,7 @@ async function notInUniverse(
     content: [
       {
         type: 'text',
-        text: `${quoteInput(domain)} is not in the Rivalize universe yet, so there is no profile to report. ${enrichmentHint(allowWrites)}`,
+        text: `${quoteInput(domain)} is not in the Rivalize universe yet and is not tracked in this workspace, so there is no profile to report. ${enrichmentHint(allowWrites)}`,
       },
     ],
   };
@@ -793,7 +981,9 @@ Args:
 Returns compact JSON: { data: { domain, name, primaryCategory, lastEnrichedAt, layerFreshness, identity, pricing, features, ads, socialInfluencers, reviews, fundingHiring, rankings, signals, momentum, ... } }.
 Long arrays (recent posts, ad creatives, sources) are capped; _capped lists kept/total for each. If a layer still does not fit, it is left out and listed in _omitted with the exact call that fetches it. The JSON is always complete and valid.
 
-If the domain is not in the universe, says so (and, when the domain is one of your tracked competitors, points at get_competitor_intelligence / get_report instead).
+Every profile carries a refresh block: { asOf, ageDays, cadenceHours, cadenceBasis, stale, notice }. A profile older than its refresh cadence has stale: true and a notice; read its figures as of asOf, not as current. When the shared universe has no published profile for a domain you track, the profile is built from your own tracked competitor data (source: "tracked_competitor", with the same asOf), covering the layers your account holds.
+
+If the domain is not in the universe and you do not track it, says so.
 
 Use when: "give me everything Rivalize knows about <domain>".`,
       inputSchema: GetUniverseSchema,
@@ -830,7 +1020,15 @@ Use when: "give me everything Rivalize knows about <domain>".`,
               layers: layer ? [layer] : undefined,
             });
           },
-          protectedKeys: ['domain', 'name', 'primaryCategory', 'lastEnrichedAt', 'layerFreshness'],
+          protectedKeys: [
+            'domain',
+            'name',
+            'primaryCategory',
+            'lastEnrichedAt',
+            'layerFreshness',
+            'source',
+            'refresh',
+          ],
         });
       } catch (err) {
         if (isNotFound(err)) return notInUniverse(client, domain, allowWrites);
@@ -851,7 +1049,7 @@ This is the one-call competitor teardown: broader than an ad-only teardown, sour
 Args:
   - domain (string, required): the competitor's domain or any URL on it.
 
-Returns Markdown. Ads count as active only if seen in the last 30 days; an unscored momentum is shown as not scored. If the domain is not yet in the universe, says so: when it is one of your tracked competitors it points at get_competitor_intelligence / get_report, otherwise at how to get it enriched.`,
+Returns Markdown. Ads count as active only if seen in the last 30 days; an unscored momentum is shown as not scored. Leads with when the data is as of and says when it is older than its refresh cadence. A tracked competitor with no published universe profile gets a teardown built from your account's own data for it (it says so, and has no universe ads, rankings or signals sections). A domain that is neither in the universe nor tracked says so and how to get it enriched.`,
       inputSchema: TeardownSchema,
       annotations: READ_ONLY,
     },
@@ -872,11 +1070,19 @@ Returns Markdown. Ads count as active only if seen in the last 30 days; an unsco
             ],
           };
         }
-        const md = renderTeardown(company, {
+        let md = renderTeardown(company, {
           nowMs: Date.now(),
           origin: opts.origin ?? 'https://rivalize.ai',
           canAddCompetitor: allowWrites,
         });
+        // A profile that is not enriched yet ends in "add it in your dashboard": an
+        // Agent key has no dashboard, so it gets the slot step instead.
+        // (With writes on the sentence names add_competitor, a dashboard-plan tool
+        // the Agent key is refused: also replaced.)
+        const dashboardHints = [DASHBOARD_ENRICHMENT_HINT, ADD_COMPETITOR_ENRICHMENT_HINT];
+        if (dashboardHints.some((h) => md.includes(h)) && (await agentSlotsOf(client))) {
+          for (const h of dashboardHints) md = md.split(h).join(agentSlotHint(allowWrites));
+        }
         return { content: [{ type: 'text' as const, text: md }] };
       } catch (err) {
         if (isNotFound(err)) return notInUniverse(client, domain, allowWrites);
@@ -1125,6 +1331,86 @@ Use when: "what's the latest intel on <competitor>?" after finding its id via li
     },
   );
 
+  // ── get_competitor_posts ──
+  server.registerTool(
+    'get_competitor_posts',
+    {
+      title: "Get a competitor's social posts by likes",
+      description: `Get one competitor's stored social posts with their likes, comments, shares and views, best first. Answers "which of their posts are winning?" and "<competitor>'s top 5 videos by likes in the last 90 days".
+
+Args:
+  - competitor_id (string, required): the competitor UUID (from list_competitors)
+  - platform ("tiktok" | "youtube" | "twitter" | "instagram" | "linkedin" | "facebook", optional): one platform ("x" means twitter)
+  - days (number, optional): published in the last N days, 1-365, default 90. Posts with no known publish date are left out.
+  - type ("video" | "image" | "text", optional): only that kind of post
+  - min_likes (number, optional): at least this many likes
+  - sort ("likes" | "views" | "recent", optional): default likes
+  - limit (number, optional): 1-100, default 20
+
+Returns JSON: { data: { competitorId, competitorName, filters, posts, coverage } }. Each post has url (the link), postedAt, platform, handle, mediaType, caption, durationSeconds, thumbnailUrl, likes, comments, shares, views and measuredAt (when those figures were read). \`coverage\` lists, per account, how many posts are stored and whether its likes are readable, so an empty list says why it is empty.
+
+A null figure means the platform did not publish it; it is NOT zero. Do not rank or compare a null like count as 0, and do not say a post "has no likes" when likes is null. A post with null likes never matches min_likes. A mediaType of null means the type is unknown. Only stored data is read: nothing is fetched live and no credits are used.
+
+Plan: post data is part of the Starter plan and above. On a free plan the answer has gated true and a gatedReason, and posts is empty because of the plan, not because nothing was collected: say so and do not report "no posts".
+
+Use when: "<competitor>'s top 5 videos by likes in the last 90 days" (type video, sort likes, limit 5), "what are <competitor>'s best posts on LinkedIn?", or finding posts worth copying. To compare the competitors' accounts with each other, use rank_competitor_accounts.`,
+      inputSchema: GetCompetitorPostsSchema,
+      annotations: READ_ONLY,
+    },
+    async (args: z.infer<typeof GetCompetitorPostsSchema>) => {
+      try {
+        const res = await client.getCompetitorPosts(args.competitor_id, {
+          platform: args.platform,
+          days: args.days,
+          type: args.type,
+          minLikes: args.min_likes,
+          sort: args.sort,
+          limit: args.limit,
+        });
+        return asResult(res as Record<string, unknown>, {
+          narrowHint: 'Narrow with limit, platform, type or min_likes.',
+        });
+      } catch (err) {
+        return formatError(err, 'COMPETITOR_NOT_FOUND');
+      }
+    },
+  );
+
+  // ── rank_competitor_accounts ──
+  server.registerTool(
+    'rank_competitor_accounts',
+    {
+      title: 'Rank competitor social accounts',
+      description: `Rank a project's competitor social accounts by how well they post. Answers "which of my competitors' accounts post best?" and "does each have a video above 500 likes?".
+
+Args:
+  - project_id (string, required): the project UUID (from list_projects)
+  - days (number, optional): look at posts published in the last N days, 1-365, default 90
+
+Returns JSON: { data: { projectId, days, videoOver500Likes, accounts } }. videoOver500Likes answers the 500-likes check over EVERY account, even when a long accounts list has to be shortened to fit: { yes, no, cannotTell, accountsWithYes: [{ rank, competitorName, platform, handle, bestVideo }] }; answer "which accounts have a video over 500 likes?" from it. accounts is best first (rank 1 is best): accounts are ranked by medianLikesPerPost (median likes over the account's posts in the window, every type, so a LinkedIn page is scored too), then median likes and views per video, then posts per week; accounts with no post in the window, or none with a published like count, follow. Each account has competitorName, platform, handle, url, followers, postsStored and videosStored (in the window), postsPerWeek, medianLikesPerPost, medianLikesPerVideo, medianViewsPerVideo, bestPost (its top post in the window by likes: platform, type, date, likes, views, link), hasVideoOver500Likes with videosChecked and bestVideo (its top stored video by likes, any date, with link and date), and a note.
+
+hasVideoOver500Likes is the cross-team rule "an account worth copying has at least one video with MORE than 500 likes". It reads EVERY stored post of the account, whatever its date (days does not narrow it; bestVideo.postedAt says when the hit was). true or false when it can be answered. It is null when it cannot: no videos are stored for the account, or the platform does not publish like counts (LinkedIn posts carry no video flag, so a LinkedIn account is always null here). null is NOT false: say "cannot tell" and give the note, never "no". Likewise a null medianLikesPerVideo or postsPerWeek means unknown, not zero. Only stored data is read: nothing is fetched live and no credits are used.
+
+Plan: the ranking is part of the Starter plan and above. On a free plan the answer has gated true and a gatedReason, and accounts is empty because of the plan: say so, never "no accounts".
+
+Use when: "which of my competitors' accounts post best?", "which accounts have a video over 500 likes?", or choosing whose posts to copy. For one competitor's individual posts, use get_competitor_posts.`,
+      inputSchema: RankAccountsSchema,
+      annotations: READ_ONLY,
+    },
+    async (args: z.infer<typeof RankAccountsSchema>) => {
+      try {
+        const res = await client.getSocialAccounts(args.project_id, args.days);
+        return asResult(shapeAccountsRanking(res as Record<string, unknown>), {
+          narrowHint:
+            'videoOver500Likes still covers every account; for the rows left out, use a shorter days window.',
+          protectedKeys: ['videoOver500Likes', 'projectId', 'days'],
+        });
+      } catch (err) {
+        return formatError(err, 'PROJECT_NOT_FOUND');
+      }
+    },
+  );
+
   // ── get_battlecard ──
   server.registerTool(
     'get_battlecard',
@@ -1368,6 +1654,8 @@ Use when: "which competitors am I tracking?", "when does my data refresh?", "can
 Args:
   - competitor_id (string, required): the competitor id from list_agent_competitors (its domain)
   - group (string, optional): core | ads_seo | extended; only that group
+  - module (string, optional): only that module (website, pricing, reviews, social, ads, seo, ...), to read one module of a big site
+  - page (integer, optional): when the answer is longer than one reply it is read in pages: the reply carries _page ("page N of M" and the exact next call) and contents (each module and the pages it spans). Nothing is left out; a long module is split by item (a website's pages) or in consecutive text chunks (partial says which).
 
 Returns JSON: { data: { id, name, url, slot, level, collection_status, collected_at, next_refresh_at, groups: { <group>: { modules: { <module>: { status, source, collected_at, data, error } } } }, not_in_plan: { <group>: { code, message } } } }.
 A group your plan level does not include is absent from groups and named in not_in_plan with code agent_module_not_in_plan. collection_status "pending" means the first collection has not finished yet.
@@ -1383,12 +1671,14 @@ Use when: "what does <competitor> charge?", "what ads is <competitor> running?",
         const res = (await client.getAgentCompetitor(args.competitor_id.trim())) as {
           data?: { groups?: Record<string, unknown> } & Record<string, unknown>;
         };
-        if (args.group && res.data?.groups) {
-          const only = res.data.groups[args.group];
-          res.data = { ...res.data, groups: only === undefined ? {} : { [args.group]: only } };
-        }
-        return asResult(res as Record<string, unknown>, {
-          narrowHint: 'The data is long: ask for one group at a time with group.',
+        const shaped = shapeAgentRead(res as Record<string, unknown>, {
+          ...args,
+          competitor_id: args.competitor_id.trim(),
+        });
+        if ('error' in shaped) return invalidArgument('module/page', shaped.error);
+        return asResult(shaped.output, {
+          narrowHint:
+            'The data is long: ask for one module at a time with module, or read the pages.',
         });
       } catch (err) {
         return formatError(err);
@@ -1524,7 +1814,7 @@ Args:
   - confirm (boolean, optional): true starts the report. Omit it for the preview.
 
 Returns JSON: { data: { started, report_id, ... } }. The preview has started: false, credits { to_use, remaining, remaining_after }, monthly_report_allowance, api_runs_today and expected_duration. A started run has started: true and a report_id: check it with get_report_status (no more often than every ${REPORT_STATUS_POLL_SECONDS} seconds), then read it with get_report.
-Limits: at most 3 reports can be started through the API or MCP per UTC day per account (dashboard runs are not counted). Asking again for the same project, competitors and depth within 10 minutes returns the run already started (already_started: true) and charges nothing more.
+Limits: each account can start a limited number of reports per UTC day through the API or MCP (dashboard runs are not counted). The preview's api_runs_today gives the limit and what is left; a started run returns api_runs_today and, when few are left, a warning sentence: show it to the user. A refusal names the limit and when it resets. Asking again for the same project, competitors and depth within 10 minutes returns the run already started (already_started: true) and charges nothing more.
 Refusals pass through with their code: PLAN_REQUIRED, agent_model_work_not_in_plan, INSUFFICIENT_CREDITS, REPORT_LIMIT_REACHED, PLAN_COMPETITOR_LIMIT, API_REPORT_RUN_LIMIT (the message gives when it resets).
 
 Use when: "run a fresh report on <project>", after the user has seen the preview and said yes.`,
@@ -1588,6 +1878,8 @@ Use when: "run a fresh report on <project>", after the user has seen the preview
               competitors,
               dropped: d.dropped ?? [],
               message: d.message,
+              api_runs_today: d.api_runs_today ?? null,
+              warning: d.warning ?? null,
               next: `Check it with ${callText('get_report_status', { report_id: reportId })}, no more often than every ${REPORT_STATUS_POLL_SECONDS} seconds; a full report takes about 10 to 20 minutes. Then read it with get_report.`,
             },
           });
@@ -1635,6 +1927,8 @@ export const READ_TOOL_NAMES = [
   'get_report',
   'list_competitors',
   'get_competitor_intelligence',
+  'get_competitor_posts',
+  'rank_competitor_accounts',
   'get_battlecard',
   'get_strategic_timeline',
   'get_competitive_landscape',

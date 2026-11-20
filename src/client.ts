@@ -62,6 +62,16 @@ export interface ListCompetitorsParams {
   offset?: number;
 }
 
+/** filters for a competitor's stored posts. */
+export interface CompetitorPostsParams {
+  platform?: string;
+  days?: number;
+  type?: 'video' | 'image' | 'text';
+  minLikes?: number;
+  sort?: 'likes' | 'views' | 'recent';
+  limit?: number;
+}
+
 export interface UniverseListParams {
   q?: string;
   category?: string;
@@ -232,6 +242,31 @@ export class RivalizeClient {
 
   async getCompetitorIntelligence(id: string): Promise<{ data: unknown }> {
     return this.request('GET', `/v1/competitors/${encodeURIComponent(id)}/intelligence`);
+  }
+
+  /** one competitor's stored posts, filtered and sorted by the API. */
+  async getCompetitorPosts(id: string, p: CompetitorPostsParams = {}): Promise<{ data: unknown }> {
+    const search = new URLSearchParams();
+    if (p.platform) search.set('platform', p.platform);
+    if (p.days !== undefined) search.set('days', String(p.days));
+    if (p.type) search.set('type', p.type);
+    if (p.minLikes !== undefined) search.set('min_likes', String(p.minLikes));
+    if (p.sort) search.set('sort', p.sort);
+    if (p.limit !== undefined) search.set('limit', String(p.limit));
+    const qs = search.toString();
+    return this.request(
+      'GET',
+      `/v1/competitors/${encodeURIComponent(id)}/posts${qs ? `?${qs}` : ''}`,
+    );
+  }
+
+  /** the project's competitor social accounts, ranked. */
+  async getSocialAccounts(projectId: string, days?: number): Promise<{ data: unknown }> {
+    const qs = days !== undefined ? `?days=${days}` : '';
+    return this.request(
+      'GET',
+      `/v1/projects/${encodeURIComponent(projectId)}/social-accounts${qs}`,
+    );
   }
 
   async getBattlecard(id: string): Promise<{ data: unknown }> {

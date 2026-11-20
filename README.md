@@ -137,7 +137,7 @@ Prices and limits are always current at [rivalize.ai/pricing](https://rivalize.a
 
 ## Tools
 
-Sixteen read-only tools are always available: fourteen for dashboard plans and
+Eighteen read-only tools are always available: sixteen for dashboard plans and
 two for Agent plans. The three write tools (`add_competitor`, `run_report` and
 `set_agent_competitor`) are registered only when `RIVALIZE_MCP_ALLOW_WRITES` is
 set to `1`, `true` or `yes`; without it, they do not exist for the client.
@@ -152,13 +152,15 @@ set to `1`, `true` or `yes`; without it, they do not exist for the client.
 | `get_report` | read | One report as Markdown, whole or one section or one competitor at a time | `report_id` (required), `section`, `competitor`, `page` |
 | `list_competitors` | read | The competitors you track, with momentum score, its threat-level band and, where the API provides it, each rival's standing on your Brief | `project_id`, `limit` (1-100), `offset` |
 | `get_competitor_intelligence` | read | Latest stored intelligence for one tracked competitor; a field is present only when it was measured | `competitor_id` (required) |
+| `get_competitor_posts` | read | A competitor's stored social posts with likes, comments, shares and views, best first, each with a link and date. A null figure is one the platform did not publish, not zero. Post data needs a Starter plan or above | `competitor_id` (required), `platform`, `days` (1-365, default 90), `type` (`video`, `image`, `text`), `min_likes`, `sort` (`likes`, `views`, `recent`), `limit` (1-100) |
+| `rank_competitor_accounts` | read | A project's competitor social accounts ranked by median likes and views per video and posts per week, with a per-account check for a video above 500 likes. null means it cannot be answered (no videos stored, or likes not published), not no. Needs a Starter plan or above | `project_id` (required), `days` (1-365, default 90) |
 | `get_battlecard` | read | Cited sales battlecard for one tracked competitor. Requires a Pro plan | `competitor_id` (required) |
 | `get_strategic_timeline` | read | Evidence-linked timeline of competitor moves across pricing, product, people, funding and content/social | `project_id` (required), `days` (`30`, `90`, `180`), `competitor_id`, `lanes`, `format`, `page` |
 | `get_competitive_landscape` | read | Current or stored weekly positions of competitors by activity and strategic importance | `project_id` (required), `week` (`YYYY-MM-DD`), `format`, `page` |
 | `get_freshness` | read | When each tracked competitor in a project was last actually observed, and how | `project_id` (required) |
 | `get_evidence` | read | The sources behind the facts for your product or one competitor: URL, what it supports, and when it was read | `project_id` (required), `competitor_id` |
 | `add_competitor` | **write**, opt-in | Add competitor URLs to a project. Spends credits and queues analysis | `project_id` (required), `urls` (1-10, required) |
-| `run_report` | **write**, opt-in | **Starts a real report that uses your credits** (paid dashboard plans; about 10 to 20 minutes). Two steps: without `confirm` it starts nothing and returns a preview (depth, the project's competitors, the credits it will use, credits and monthly reports left, expected time). With `confirm: true` it starts the run. `depth` is `full` (15 credits per 5 competitors, uses a monthly report) or `quick` (1 credit per competitor). At most 3 runs a day through the API or MCP per account, and the same request within 10 minutes returns the run already started | `project_id` (required), `depth`, `confirm` |
+| `run_report` | **write**, opt-in | **Starts a real report that uses your credits** (paid dashboard plans; about 10 to 20 minutes). Two steps: without `confirm` it starts nothing and returns a preview (depth, the project's competitors, the credits it will use, credits and monthly reports left, expected time). With `confirm: true` it starts the run. `depth` is `full` (15 credits per 5 competitors, uses a monthly report) or `quick` (1 credit per competitor). Runs started through the API or MCP have a daily limit per account: the preview and a started run say the limit and how many are left, and a started run warns when few remain. The same request within 10 minutes returns the run already started | `project_id` (required), `depth`, `confirm` |
 | `get_report_status` | read | Whether a report started with `run_report` has finished (`processing`, `completed`, `no_competitors`, `no_rivals`), and the next call. Poll no more often than every 30 seconds | `report_id` (required) |
 | `list_agent_competitors` | read | **Agent plans.** The 3 tracked-competitor slots: who is tracked, when each was last collected, when it refreshes next (every 7 days), and how many slot changes are left this calendar month | none |
 | `get_agent_competitor` | read | **Agent plans.** The raw data collected about one tracked competitor, by group (`core`, `ads_seo`, `extended`), each module with its source and `collected_at`. A group your plan does not include is listed under `not_in_plan`. Your own assistant does the analysis | `competitor_id` (the domain, required), `group` |
@@ -356,6 +358,28 @@ entry. The tests validate it against the official schema (vendored in
 
 ## Changelog
 
+### 0.6.1
+
+- `run_report` no longer states a fixed daily limit. The preview and a started run
+  relay the number of runs left today and any warning the API returns, so the
+  tool and the API cannot disagree.
+
+### 0.6.0
+
+- New `get_competitor_posts`: a competitor's stored social posts with likes,
+  comments, shares and views, best first, filterable by platform, type, minimum
+  likes and age.
+- New `rank_competitor_accounts`: a project's competitor social accounts ranked
+  by median likes and views per video and posts per week, with a check for a
+  video above 500 likes on every account, however long the ranking.
+- Every result now also carries a plain-words notice that the content is
+  generated from public sources by AI and can contain mistakes.
+- `get_agent_competitor` reads a large competitor in pages instead of dropping
+  the largest groups, and `teardown_competitor` no longer sends an Agent plan
+  customer to a dashboard they do not have.
+- A teardown of a tracked competitor states where the profile comes from and
+  how old it is, and lists the ratings held for it.
+
 ### 0.5.1
 
 - README, `llms-install.md`, directory listings and `server.json` now lead
@@ -370,7 +394,7 @@ entry. The tests validate it against the official schema (vendored in
   It **starts a real report that uses your credits**, so it works in two
   steps: without `confirm` it starts nothing and returns a preview of the
   depth, competitors, credits it will use and what you have left; with
-  `confirm: true` it starts the run. The API limits runs to 3 a day per account
+  `confirm: true` it starts the run. The API limits runs per account each day
   and returns the run already started for the same request within 10 minutes.
 - New `get_report_status` to check whether a started report has finished.
 - `get_report` now reports figures the fabrication check could not match to a

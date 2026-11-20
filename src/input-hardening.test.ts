@@ -182,7 +182,12 @@ describe('domain is at most 253 characters', () => {
       }
       expect(fetchImpl).not.toHaveBeenCalled();
       await client.callTool({ name, arguments: { domain: at253 } });
-      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      // exactly one universe request. (An unenriched profile makes teardown_competitor
+      // ask once whether the key is an Agent key, to word its next step.)
+      const universeCalls = fetchImpl.mock.calls.filter((c) =>
+        String(c[0]).includes('/universe/companies/'),
+      );
+      expect(universeCalls).toHaveLength(1);
     });
   }
 
